@@ -1,7 +1,7 @@
 import { waitUntil } from '@vercel/functions';
 import getRawBody from 'raw-body';
 import { verifySlackSignature, postToSlack, resolveUser, fetchThreadMessages } from '../lib/slack.js';
-import { detectTrigger, isBotInThread } from '../lib/trigger.js';
+import { detectTrigger, isBotInThread, isAddressedToOtherUser } from '../lib/trigger.js';
 import { isDuplicate } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal } from '../lib/intent.js';
@@ -66,8 +66,12 @@ async function processEvent(body) {
   if (!trigger && event.thread_ts) {
     const threadMsgs = await fetchThreadMessages(event.channel, event.thread_ts);
     if (isBotInThread(threadMsgs, botUserId)) {
-      trigger = 'thread_continuation';
-      console.log('trigger: thread_continuation (bot already in thread)');
+      if (isAddressedToOtherUser(event.text, botUserId)) {
+        console.log('skip: thread continuation, but message @mentions someone else');
+      } else {
+        trigger = 'thread_continuation';
+        console.log('trigger: thread_continuation (bot already in thread)');
+      }
     }
   }
 
