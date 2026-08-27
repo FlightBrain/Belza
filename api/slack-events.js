@@ -63,8 +63,10 @@ async function processEvent(body) {
     return;
   }
 
-  // Only respond to direct mentions, inferred questions, or thread continuation
-  let trigger = detectTrigger(event.text);
+  // In a DM there's no ambiguity about who a message is for - it's always
+  // the bot, no @mention needed. Only real multi-person surfaces (channels,
+  // group DMs) need the mention/thread-continuation logic below.
+  let trigger = event.channel_type === 'im' ? 'direct' : detectTrigger(event.text);
 
   // Thread continuation: if the bot is already in a thread and someone replies
   // without @mentioning, treat it as an implicit trigger.
