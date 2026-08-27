@@ -12,7 +12,7 @@ import { buildThreadContext } from '../lib/thread-context.js';
 import { buildSystemPrompt } from '../prompts/system.js';
 import { callClaude } from '../lib/claude.js';
 import { applyGuardrails } from '../lib/guardrails.js';
-import { executeRelay } from '../lib/relay.js';
+import { executeRelay, willAttemptRelay } from '../lib/relay.js';
 import { updateJob } from '../lib/relay-store.js';
 import { handleReaction } from '../lib/feedback.js';
 import { logTrace, traceId, logFeedback } from '../lib/braintrust.js';
@@ -28,6 +28,15 @@ export const config = {
 // and pin a trace back to the exact deployed commit.
 const ENVIRONMENT = process.env.VERCEL_ENV || 'development';
 const APP_VERSION = process.env.VERCEL_GIT_COMMIT_SHA || 'local';
+
+// Casual filler posted right before a (slow) relay lookup so the bot doesn't
+// look frozen in a fast-moving thread.
+const RELAY_FILLERS = [
+  'one sec, checking notion for that.',
+  'hang on, digging that up.',
+  'gimme a sec to check on that.',
+  'checking, one moment.',
+];
 
 async function processEvent(body) {
   const processStart = new Date().toISOString();
@@ -107,6 +116,14 @@ async function processEvent(body) {
   // If relay returns a non-answer, it returns null and we fall through to local.
   const threadContext = await buildThreadContext(event);
   const workSignal = hasWorkSignal(cleanedText);
+
+  // The relay poll can take up to ~55s (lib/relay-config.js RELAY_TIMEOUT_MS),
+  // which reads as the bot going silent/stuck in a fast-moving thread. Post a
+  // quick filler first so it's clear something is happening.
+  if (willAttemptRelay({ event, cleanedText, intent, hasWorkSignal: workSignal })) {
+    const filler = RELAY_FILLERS[Math.floor(Math.random() * RELAY_FILLERS.length)];
+    await postToSlack({ channel: event.channel, text: filler, thread_ts: replyThreadTs });
+  }
 
   let relayResult = null;
   const relayStartedAt = new Date();

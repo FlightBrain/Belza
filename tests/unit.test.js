@@ -20,6 +20,8 @@ import {
   formatRelayRequest,
   cleanRelayResponse,
   isNonAnswer,
+  shouldRelay,
+  willAttemptRelay,
 } from '../lib/relay.js';
 import {
   getUserProfile,
@@ -594,6 +596,74 @@ describe('getRelayConfig', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Relay eligibility
+// ---------------------------------------------------------------------------
+
+describe('shouldRelay', () => {
+  it('relays a RELAY_INTENTS intent regardless of work signal', () => {
+    assert.equal(shouldRelay('calendar_whereabouts', false, 'where is nate'), true);
+  });
+
+  it('relays general_qna only with a work signal', () => {
+    assert.equal(shouldRelay('general_qna', true, 'what is the pipeline like'), true);
+    assert.equal(shouldRelay('general_qna', false, 'how is your day'), false);
+  });
+
+  it('does not relay a "tell your AE" style relay-a-message request', () => {
+    assert.equal(shouldRelay('general_qna', true, 'tell your AE.'), false);
+    assert.equal(shouldRelay('general_qna', true, 'let your manager know we need this'), false);
+  });
+
+  it('still relays a real question that happens to start with a relay-action word', () => {
+    assert.equal(shouldRelay('help_request', false, 'tell me about the onboarding doc'), true);
+  });
+});
+
+describe('willAttemptRelay', () => {
+  beforeEach(() => {
+    delete process.env.RELAY_ENABLED;
+    delete process.env.RELAY_CHANNEL_ID;
+  });
+
+  it('is false when relay is disabled', () => {
+    delete process.env.RELAY_ENABLED;
+    const result = willAttemptRelay({
+      event: { channel: 'C123', ts: '1', user: 'U1' },
+      cleanedText: 'what is the pipeline like',
+      intent: 'general_qna',
+      hasWorkSignal: true,
+    });
+    assert.equal(result, false);
+  });
+
+  it('is true for an eligible message when relay is enabled', () => {
+    process.env.RELAY_ENABLED = 'true';
+    const result = willAttemptRelay({
+      event: { channel: 'C123', ts: '2', user: 'U1' },
+      cleanedText: 'what is the pipeline like',
+      intent: 'general_qna',
+      hasWorkSignal: true,
+    });
+    assert.equal(result, true);
+    delete process.env.RELAY_ENABLED;
+  });
+
+  it('is false for messages originating from the relay channel itself', () => {
+    process.env.RELAY_ENABLED = 'true';
+    process.env.RELAY_CHANNEL_ID = 'C0AQCKR9M2S';
+    const result = willAttemptRelay({
+      event: { channel: 'C0AQCKR9M2S', ts: '3', user: 'U1' },
+      cleanedText: 'what is the pipeline like',
+      intent: 'general_qna',
+      hasWorkSignal: true,
+    });
+    assert.equal(result, false);
+    delete process.env.RELAY_ENABLED;
+    delete process.env.RELAY_CHANNEL_ID;
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Relay store
 // ---------------------------------------------------------------------------
 
@@ -1159,6 +1229,46 @@ describe('user profiles', () => {
   it('returns empty string for null profile', () => {
     const context = profileToPromptContext(null);
     assert.equal(context, '');
+  });
+
+  it('remembers when someone is mean to the bot, keyed by their Slack ID', async () => {
+    await updateUserProfile('U008', {
+      displayName: 'Owen',
+      message: "you're useless honestly",
+      intent: 'banter',
+      channel: 'C1',
+    });
+    const profile = await getUserProfile('U008');
+    assert.equal(profile.meanMoments.length, 1);
+    assert.match(profile.meanMoments[0].message, /useless/);
+
+    const other = await getUserProfile('U009');
+    assert.equal(other, null);
+  });
+
+  it('surfaces mean history in the prompt context so the bot can rib back', async () => {
+    await updateUserProfile('U010', {
+      displayName: 'Owen',
+      message: 'worst bot ever',
+      intent: 'banter',
+      channel: 'C1',
+    });
+    const profile = await getUserProfile('U010');
+    const history = await getUserHistory('U010');
+    const context = profileToPromptContext(profile, history);
+    assert.ok(context.includes('given you a hard time before'));
+    assert.ok(context.includes('worst bot ever'));
+  });
+
+  it('does not flag ordinary messages as mean', async () => {
+    await updateUserProfile('U011', {
+      displayName: 'Keslar',
+      message: 'blueberry pls',
+      intent: 'general_qna',
+      channel: 'C1',
+    });
+    const profile = await getUserProfile('U011');
+    assert.equal(profile.meanMoments.length, 0);
   });
 });
 
