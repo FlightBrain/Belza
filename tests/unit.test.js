@@ -1373,6 +1373,18 @@ describe('user profiles', () => {
     assert.equal(matches.length, 0);
   });
 
+  it('findMentionedTeammates matches a first-name-only mention against a full display name', () => {
+    const knownUsers = [{ userId: 'U022', displayName: 'Alec Sloan' }];
+    const matches = findMentionedTeammates('what does alec do all day', knownUsers, null);
+    assert.deepEqual(matches, [{ userId: 'U022', displayName: 'Alec Sloan' }]);
+  });
+
+  it('findMentionedTeammates still matches on the full name too', () => {
+    const knownUsers = [{ userId: 'U022', displayName: 'Alec Sloan' }];
+    const matches = findMentionedTeammates('is alec sloan around today', knownUsers, null);
+    assert.deepEqual(matches, [{ userId: 'U022', displayName: 'Alec Sloan' }]);
+  });
+
   it('teammateFactsToPromptContext exposes only channel notes and life events', async () => {
     await updateUserProfile('U015', {
       displayName: 'Owen',
