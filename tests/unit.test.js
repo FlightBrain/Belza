@@ -397,6 +397,18 @@ describe('buildSystemPrompt', () => {
     assert.ok(prompt.includes('do not guess'));
   });
 
+  it('includes intent-specific rules for general_qna warning against carrying old bits forward', () => {
+    const prompt = buildSystemPrompt({
+      notionContext: '',
+      calendarContext: '',
+      capabilities: '',
+      intent: 'general_qna',
+      threadContext: '',
+    });
+    assert.ok(prompt.includes('plain conversational question'));
+    assert.ok(prompt.includes("don't reach for an absurd or invented topic"));
+  });
+
   it('includes intent-specific rules for bot_meta', () => {
     const prompt = buildSystemPrompt({
       notionContext: '',
@@ -983,6 +995,37 @@ describe('guardrails canned deflections', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Guardrails: link formatting
+// ---------------------------------------------------------------------------
+
+describe('guardrails link formatting', () => {
+  it('leaves short, readable bare URLs alone', () => {
+    const input =
+      'dropbox is a great case study for search/rag. https://braintrust.dev/customers/dropbox';
+    assert.equal(applyGuardrails(input), input);
+  });
+
+  it('gives an empty-label Slack link a real label', () => {
+    const url =
+      'https://app.notion.com/agent/33cf785802898035a5ba0092a73b98bf?wfv=activity&at=3c9f78580289815c9fc700a9cc655220&spaceId=4ff7064080944f7f819c11dcab9fca11&no_unfurl=true';
+    const result = applyGuardrails(`Your next meeting: <${url}|>`);
+    assert.equal(result, `Your next meeting: <${url}|link>`);
+  });
+
+  it('wraps a long bare calendar URL as a short clickable link', () => {
+    const url =
+      'https://calendar.notion.so/event/Ym1yZmVlazEwNmc3aDRnM2NtbTVtcGsxMjM0NTY3ODkwYWJjZGVmZ2hpams';
+    const result = applyGuardrails(`Donut with Aaron. ${url}`);
+    assert.equal(result, `Donut with Aaron. <${url}|calendar link>`);
+  });
+
+  it('does not double-wrap an already-labeled Slack link', () => {
+    const input = 'see <https://braintrust.dev/docs|the docs> for more';
+    assert.equal(applyGuardrails(input), input);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // User profiles
 // ---------------------------------------------------------------------------
 
@@ -1294,6 +1337,15 @@ describe('feedback intent', () => {
     assert.equal(classifyIntent('actually, no, it moved to friday'), 'feedback');
     assert.equal(classifyIntent('that didn\'t work'), 'feedback');
     assert.equal(classifyIntent('you misunderstood the question'), 'feedback');
+  });
+
+  it('detects "some feedback ..." even though it mentions a work keyword', () => {
+    assert.equal(
+      classifyIntent(
+        'some feedback have the link attacked to the meeting or soemthign dont have massive dstrign of text always atach it to the mssg,',
+      ),
+      'feedback',
+    );
   });
 });
 
