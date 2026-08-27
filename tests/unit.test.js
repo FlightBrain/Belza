@@ -44,6 +44,10 @@ import {
   getChannelLogSince,
   _resetChannelLog,
 } from '../lib/channel-log.js';
+import {
+  resolveUserId,
+  neutralizeDeparture,
+} from '../scripts/memory-distill.js';
 
 // ---------------------------------------------------------------------------
 // Dedup
@@ -1409,6 +1413,28 @@ describe('user profiles', () => {
     const known = await getKnownUsers();
     assert.ok(known.some((u) => u.userId === 'U016' && u.displayName === 'Dana'));
   });
+
+  it('ambient messages (intent: null) are not filed as mean moments, even with mean-sounding phrasing', async () => {
+    await updateUserProfile('U017', {
+      displayName: 'Priya',
+      message: 'that demo was so cringe honestly',
+      intent: null,
+      channel: 'C1',
+    });
+    const profile = await getUserProfile('U017');
+    assert.equal(profile.meanMoments.length, 0);
+  });
+
+  it('ambient messages (intent: null) do not populate personality signals', async () => {
+    await updateUserProfile('U018', {
+      displayName: 'Priya',
+      message: 'lol can you believe that demo',
+      intent: null,
+      channel: 'C1',
+    });
+    const profile = await getUserProfile('U018');
+    assert.equal(profile.personality.length, 0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1456,6 +1482,39 @@ describe('channel log', () => {
     assert.equal(log.length, 5000);
     assert.equal(log[0].message, 'msg 10'); // first 10 dropped
     assert.equal(log[log.length - 1].message, 'msg 5009');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// memory-distill helpers
+// ---------------------------------------------------------------------------
+
+describe('memory-distill helpers', () => {
+  it('resolveUserId matches a first-name-only extraction against a full display name', () => {
+    const knownUsers = [{ userId: 'U022', displayName: 'Alec Sloan' }];
+    assert.equal(resolveUserId('Alec', knownUsers), 'U022');
+    assert.equal(resolveUserId('alec', knownUsers), 'U022'); // case-insensitive
+  });
+
+  it('resolveUserId still matches the full name', () => {
+    const knownUsers = [{ userId: 'U022', displayName: 'Alec Sloan' }];
+    assert.equal(resolveUserId('Alec Sloan', knownUsers), 'U022');
+  });
+
+  it('resolveUserId returns null for someone not in the known-users list', () => {
+    const knownUsers = [{ userId: 'U022', displayName: 'Alec Sloan' }];
+    assert.equal(resolveUserId('Someone Else', knownUsers), null);
+  });
+
+  it('neutralizeDeparture rewrites mocking termination language to neutral phrasing', () => {
+    assert.equal(neutralizeDeparture('got fired last week'), 'got left the company last week');
+    assert.equal(neutralizeDeparture('was laid off in the reorg'), 'was left the company in the reorg');
+    assert.equal(neutralizeDeparture('got sacked'), 'got left the company');
+  });
+
+  it('neutralizeDeparture leaves already-neutral phrasing untouched', () => {
+    assert.equal(neutralizeDeparture('left the company in August'), 'left the company in August');
+    assert.equal(neutralizeDeparture('promoted to senior SDR'), 'promoted to senior SDR');
   });
 });
 

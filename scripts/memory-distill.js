@@ -81,10 +81,45 @@ async function classify(transcript) {
   }
 }
 
-function resolveUserId(name, knownUsers) {
+// Deterministic backstop for the "never phrase a departure as a firing"
+// rule - the system prompt above already instructs the model not to, but
+// that's a request, not a guarantee. Same philosophy as lib/guardrails.js:
+// don't rely solely on the model complying, enforce it in code too.
+const MOCKING_DEPARTURE_PATTERNS = [
+  /\bfired\b/gi,
+  /\blaid off\b/gi,
+  /\bsacked\b/gi,
+  /\bcanned\b/gi,
+  /\bbooted\b/gi,
+  /\bkicked out\b/gi,
+  /\bterminated\b/gi,
+  /\bgot the axe\b/gi,
+  /\baxed\b/gi,
+];
+
+export function neutralizeDeparture(note) {
+  if (!note) return note;
+  let out = note;
+  for (const pattern of MOCKING_DEPARTURE_PATTERNS) {
+    out = out.replace(pattern, 'left the company');
+  }
+  return out;
+}
+
+// Matches on the full display name OR just the first name, since the LLM
+// extraction (and the transcript it reads) will often use a first name
+// only ("alec's last day is friday") even though the stored profile has a
+// full name ("Alec Sloan") - same fix as findMentionedTeammates in
+// lib/user-profiles.js, needed here too since this does its own matching.
+export function resolveUserId(name, knownUsers) {
   if (!name) return null;
-  const lower = name.trim().toLowerCase();
-  const hit = knownUsers.find((u) => (u.displayName || '').trim().toLowerCase() === lower);
+  const target = name.trim().toLowerCase();
+  const hit = knownUsers.find((u) => {
+    const full = (u.displayName || '').trim().toLowerCase();
+    if (!full) return false;
+    const first = full.split(/\s+/)[0];
+    return full === target || first === target;
+  });
   return hit?.userId || null;
 }
 
@@ -116,11 +151,12 @@ async function main() {
       console.log(`memory-distill: could not resolve "${person.name}" to a known user, skipping`);
       continue;
     }
+    const lifeEvents = (person.lifeEvents || []).map((e) => ({ ...e, note: neutralizeDeparture(e.note) }));
     await mergeChannelIntel(userId, {
-      lifeEvents: person.lifeEvents || [],
+      lifeEvents,
       notes: person.notes || [],
     });
-    audit.extracted.push({ name: person.name, userId, lifeEvents: person.lifeEvents || [], notes: person.notes || [] });
+    audit.extracted.push({ name: person.name, userId, lifeEvents, notes: person.notes || [] });
     console.log(`memory-distill: merged intel for ${person.name} (${userId})`);
   }
 
@@ -136,7 +172,11 @@ async function main() {
   console.log(`memory-distill: scan complete. ${entries.length} messages scanned, ${audit.extracted.length} people updated`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only run when executed directly (`node scripts/memory-distill.js`), not
+// when imported by tests for the pure helper functions above.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

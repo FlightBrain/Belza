@@ -113,11 +113,15 @@ async function processEvent(body) {
   if (!trigger) {
     // Not directed at the bot, but if it's in the SDR friends channel, still
     // remember it happened - ambient memory, fed continuously instead of
-    // only on bot-directed messages. Fire-and-forget so this never adds
-    // latency or risks the "no trigger" path.
+    // only on bot-directed messages. Awaited (not fire-and-forget) because
+    // this whole handler runs inside Vercel's waitUntil, which only keeps
+    // the invocation alive until the promise IT'S GIVEN resolves - an
+    // un-awaited chain here could get cut off mid-write once processEvent
+    // returns, silently dropping the KV writes.
     if (event.channel === AMBIENT_LOG_CHANNEL_ID && event.user) {
-      resolveUser(event.user).then((displayName) => {
-        return Promise.all([
+      try {
+        const displayName = await resolveUser(event.user);
+        await Promise.all([
           updateUserProfile(event.user, {
             displayName,
             message: cleanedText,
@@ -131,7 +135,9 @@ async function processEvent(body) {
             ts: event.ts,
           }),
         ]);
-      }).catch((e) => console.error('ambient log failed:', e.message));
+      } catch (e) {
+        console.error('ambient log failed:', e.message);
+      }
     }
 
     console.log(`no trigger: ignoring channel=${event.channel} thread_ts=${event.thread_ts || 'none'} ts=${event.ts}`);
@@ -149,13 +155,27 @@ async function processEvent(body) {
   const replyThreadTs =
     event.thread_ts || (trigger === 'direct' ? event.ts : undefined);
 
-  // Known teammates mentioned by name (e.g. "did alice leave?"). If we have
-  // our own grounded memory about them, answer locally instead of relaying -
-  // the Notion agent has no idea about Slack-derived facts like who left or
-  // got promoted.
+  // Known teammates mentioned by name (e.g. "did alice leave?"). Only skip
+  // the relay when we actually have grounded facts about them (channel
+  // notes / life events) - being in the known-users index just means
+  // they've posted a message in the channel at some point, which is true
+  // of nearly everyone once ambient logging is running. Gating on index
+  // membership alone would silently break "who is X" for people we have
+  // nothing to say about, where the Notion relay might still have a real
+  // answer.
   const knownUsers = await getKnownUsers();
   const mentionedTeammates = findMentionedTeammates(cleanedText, knownUsers, event.user);
-  const hasLocalPersonLookup = intent === 'identity_person_lookup' && mentionedTeammates.length > 0;
+  const mentionedFacts = (
+    await Promise.all(
+      mentionedTeammates.map(async (u) => {
+        const profile = await getUserProfile(u.userId);
+        const facts = teammateFactsToPromptContext(profile);
+        return facts ? { displayName: u.displayName, facts } : null;
+      }),
+    )
+  ).filter(Boolean);
+  const mentionedContext = mentionedFacts.map((m) => `*${m.displayName}*:\n${m.facts}`).join('\n\n');
+  const hasLocalPersonLookup = intent === 'identity_person_lookup' && mentionedFacts.length > 0;
 
   // --- RELAY PATH ---
   // Only relay when the intent genuinely needs grounded Notion/Calendar data.
@@ -399,19 +419,8 @@ async function processEvent(body) {
     ? await Promise.all([getUserProfile(event.user), getUserHistory(event.user)])
     : [null, []];
   const userContext = profileToPromptContext(userProfile, userHistory);
-
-  // Facts about any OTHER teammates named in this message - only the
-  // durable, team-visible slice (channel notes, life events), never their
-  // private interaction history with the bot.
-  const mentionedContext = (
-    await Promise.all(
-      mentionedTeammates.map(async (u) => {
-        const profile = await getUserProfile(u.userId);
-        const facts = teammateFactsToPromptContext(profile);
-        return facts ? `*${u.displayName}*:\n${facts}` : null;
-      }),
-    )
-  ).filter(Boolean).join('\n\n');
+  // mentionedContext (facts about other teammates named in this message)
+  // was already computed above, alongside the relay-skip decision.
 
   // Only pull Notion/calendar context when the message actually calls for it —
   // stuffing every reply with SDR Hub content and calendar lookups wastes
