@@ -1285,6 +1285,16 @@ describe('feedback intent', () => {
   it('detects "feedback the answer was wrong"', () => {
     assert.equal(classifyIntent('feedback the answer was wrong'), 'feedback');
   });
+
+  it('detects casual in-thread corrections without a trigger phrase', () => {
+    assert.equal(classifyIntent("no that's not right, my meeting is at 3"), 'feedback');
+    assert.equal(classifyIntent('you missed the meeting time'), 'feedback');
+    assert.equal(classifyIntent("that's not what i asked"), 'feedback');
+    assert.equal(classifyIntent('nope, that\'s the wrong meeting'), 'feedback');
+    assert.equal(classifyIntent('actually, no, it moved to friday'), 'feedback');
+    assert.equal(classifyIntent('that didn\'t work'), 'feedback');
+    assert.equal(classifyIntent('you misunderstood the question'), 'feedback');
+  });
 });
 
 // ---------------------------------------------------------------------------
