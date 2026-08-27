@@ -4,9 +4,9 @@ import { verifySlackSignature, postToSlack, resolveUser, fetchThreadMessages } f
 import { detectTrigger, isBotInThread, isAddressedToOtherUser } from '../lib/trigger.js';
 import { isDuplicate } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
-import { classifyIntent, hasWorkSignal } from '../lib/intent.js';
+import { classifyIntent, hasWorkSignal, wantsMarketingEvents } from '../lib/intent.js';
 import { getCapabilities, capabilitySummary } from '../lib/capabilities.js';
-import { fetchContext } from '../lib/context.js';
+import { fetchContext, fetchMarketingEvents } from '../lib/context.js';
 import { fetchCalendarContext } from '../lib/calendar.js';
 import { buildThreadContext } from '../lib/thread-context.js';
 import { buildSystemPrompt } from '../prompts/system.js';
@@ -309,14 +309,21 @@ async function processEvent(body) {
     : [null, []];
   const userContext = profileToPromptContext(userProfile, userHistory);
 
-  const [notionContext, calendarContext] = await Promise.all([
-    fetchContext(),
-    fetchCalendarContext(),
+  // Only pull Notion/calendar context when the message actually calls for it —
+  // stuffing every reply with SDR Hub content and calendar lookups wastes
+  // calls and pollutes answers to unrelated questions.
+  const wantsCalendar = intent === 'calendar_whereabouts';
+  const wantsEvents = wantsMarketingEvents(cleanedText);
+  const [notionContext, calendarContext, marketingEventsContext] = await Promise.all([
+    workSignal ? fetchContext() : Promise.resolve(null),
+    wantsCalendar ? fetchCalendarContext() : Promise.resolve(null),
+    wantsEvents ? fetchMarketingEvents() : Promise.resolve(null),
   ]);
 
   const systemPrompt = buildSystemPrompt({
     notionContext,
     calendarContext,
+    marketingEventsContext,
     capabilities,
     intent,
     threadContext,
@@ -341,6 +348,8 @@ async function processEvent(body) {
         input: {
           message: cleanedText,
           notion_context: notionContext || null,
+          calendar_context: calendarContext || null,
+          marketing_events_context: marketingEventsContext || null,
           thread_context: threadContext || null,
         },
         output: {
@@ -356,6 +365,9 @@ async function processEvent(body) {
           thread_ts: replyThreadTs || null,
           intent,
           path: 'local',
+          used_notion_context: Boolean(workSignal),
+          used_calendar_context: Boolean(wantsCalendar),
+          used_marketing_events_context: Boolean(wantsEvents),
         },
         tags: ['slack-bot'],
         startTime: processStart,

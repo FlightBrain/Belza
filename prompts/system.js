@@ -1,6 +1,7 @@
 export function buildSystemPrompt({
   notionContext,
   calendarContext,
+  marketingEventsContext,
   capabilities,
   intent,
   threadContext,
@@ -125,7 +126,7 @@ ${calendarContext || '[not connected]'}
 
 ## notion context
 ${notionContext || '[not connected]'}
-`.trim();
+${marketingEventsContext ? `\n## marketing events calendar (H2 Field Marketing Program)\n${marketingEventsContext}\n` : ''}`.trim();
 }
 
 function buildIntentRules(intent) {
