@@ -24,6 +24,11 @@ export const config = {
   api: { bodyParser: false },
 };
 
+// Lets Braintrust separate production traffic from local/smoke-test runs
+// and pin a trace back to the exact deployed commit.
+const ENVIRONMENT = process.env.VERCEL_ENV || 'development';
+const APP_VERSION = process.env.VERCEL_GIT_COMMIT_SHA || 'local';
+
 async function processEvent(body) {
   const processStart = new Date().toISOString();
   const event = body?.event;
@@ -99,6 +104,7 @@ async function processEvent(body) {
   const workSignal = hasWorkSignal(cleanedText);
 
   let relayResult = null;
+  const relayStartedAt = new Date();
   try {
     relayResult = await executeRelay({
       event,
@@ -110,6 +116,7 @@ async function processEvent(body) {
   } catch (e) {
     console.error(`relay error: ${e.message}`);
   }
+  const relayFinishedAt = new Date();
 
   if (relayResult) {
     if (relayResult.skipped) return;
@@ -147,9 +154,21 @@ async function processEvent(body) {
             conversation_id: `${event.channel}:${replyThreadTs || posted.ts}`,
             intent,
             path: 'relay',
+            environment: ENVIRONMENT,
+            trace_kind: 'production_reply',
+            app_version: APP_VERSION,
           },
           tags: ['slack-bot'],
           startTime: processStart,
+          spans: [{
+            name: 'relay_lookup',
+            type: 'function',
+            input: { question: cleanedText, request_id: relayResult.requestId || null },
+            output: { answer: safeAnswer },
+            metadata: { request_id: relayResult.requestId || null },
+            startTime: relayStartedAt,
+            endTime: relayFinishedAt,
+          }],
         });
         console.log(`bt: logged trace ${traceId(event.channel, posted.ts)}`, btResult?.row_ids ? 'ok' : 'failed');
       } catch (e) {
@@ -316,16 +335,18 @@ async function processEvent(body) {
   // calls and pollutes answers to unrelated questions.
   const wantsCalendar = intent === 'calendar_whereabouts';
   const wantsEvents = wantsMarketingEvents(cleanedText);
-  const [notionContext, calendarContext, marketingEventsContext] = await Promise.all([
+  const retrievalStartedAt = new Date();
+  const [notionResult, calendarResult, marketingEventsResult] = await Promise.all([
     workSignal ? fetchContext() : Promise.resolve(null),
     wantsCalendar ? fetchCalendarContext() : Promise.resolve(null),
     wantsEvents ? fetchMarketingEvents() : Promise.resolve(null),
   ]);
+  const retrievalFinishedAt = new Date();
 
   const systemPrompt = buildSystemPrompt({
-    notionContext,
-    calendarContext,
-    marketingEventsContext,
+    notionContext: notionResult?.text,
+    calendarContext: calendarResult?.text,
+    marketingEventsContext: marketingEventsResult?.text,
     capabilities,
     intent,
     threadContext,
@@ -333,7 +354,9 @@ async function processEvent(body) {
     userContext,
   });
 
+  const llmStartedAt = new Date();
   const result = await callClaude(systemPrompt, cleanedText, { senderName, intent });
+  const llmFinishedAt = new Date();
   if (!result?.reply || result.reply === '[SKIP]') return;
 
   const posted = await postToSlack({
@@ -342,6 +365,38 @@ async function processEvent(body) {
     thread_ts: replyThreadTs,
   });
 
+  // Retrieval spans — one per Notion page / calendar hit, carrying status,
+  // latency, result count, and failure reason so a "[unavailable]" context
+  // is a diagnosable retrieval span, not a silent gap in the final prompt.
+  const retrievalRecords = [
+    ...(notionResult?.retrieval || []),
+    ...(calendarResult?.retrieval || []),
+    ...(marketingEventsResult?.retrieval || []),
+  ];
+  const retrievalSpans = retrievalRecords.map((r) => ({
+    name: r.name,
+    type: 'function',
+    input: { document_id: r.documentId },
+    output: r.status === 'ok' ? { text: r.text, result_count: r.resultCount } : null,
+    error: r.status === 'error' ? r.error : undefined,
+    metadata: { status: r.status, result_count: r.resultCount },
+    startTime: retrievalStartedAt,
+    endTime: new Date(retrievalStartedAt.getTime() + r.latencyMs),
+  }));
+
+  const llmSpan = {
+    name: 'LLM',
+    type: 'llm',
+    input: [{ role: 'system', content: systemPrompt }, { role: 'user', content: cleanedText }],
+    output: { content: result.reply },
+    metadata: { model: result.model, provider: 'groq' },
+    startTime: llmStartedAt,
+    endTime: llmFinishedAt,
+    promptTokens: result.tokens?.input,
+    completionTokens: result.tokens?.output,
+    totalTokens: (result.tokens?.input || 0) + (result.tokens?.output || 0),
+  };
+
   // Log to Braintrust with full context.
   if (posted.ts) {
     try {
@@ -349,9 +404,9 @@ async function processEvent(body) {
         id: traceId(event.channel, posted.ts),
         input: {
           message: cleanedText,
-          notion_context: notionContext || null,
-          calendar_context: calendarContext || null,
-          marketing_events_context: marketingEventsContext || null,
+          notion_context: notionResult?.text || null,
+          calendar_context: calendarResult?.text || null,
+          marketing_events_context: marketingEventsResult?.text || null,
           thread_context: threadContext || null,
         },
         output: {
@@ -360,6 +415,7 @@ async function processEvent(body) {
           tokens: result.tokens,
           latency_ms: result.latencyMs,
         },
+        spans: [...retrievalSpans, llmSpan],
         metadata: {
           channel: event.channel,
           slack_user: event.user || null,
@@ -368,6 +424,9 @@ async function processEvent(body) {
           conversation_id: `${event.channel}:${replyThreadTs || posted.ts}`,
           intent,
           path: 'local',
+          environment: ENVIRONMENT,
+          trace_kind: 'production_reply',
+          app_version: APP_VERSION,
           used_notion_context: Boolean(workSignal),
           used_calendar_context: Boolean(wantsCalendar),
           used_marketing_events_context: Boolean(wantsEvents),
