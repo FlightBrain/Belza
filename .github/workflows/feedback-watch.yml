@@ -1,0 +1,41 @@
+name: feedback-watch
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: feedback-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Scan Braintrust for idle conversations with feedback
+        env:
+          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: node scripts/watch-feedback.js
+
+      - name: Commit queue updates
+        run: |
+          git config user.name "feedback-watch bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add automation/
+          if ! git diff --cached --quiet; then
+            git commit -m "feedback-watch: scan update"
+            git push
+          else
+            echo "no changes to commit"
+          fi
