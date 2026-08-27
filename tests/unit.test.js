@@ -28,12 +28,22 @@ import {
   getUserHistory,
   updateUserProfile,
   profileToPromptContext,
+  mergeChannelIntel,
+  getKnownUsers,
+  findMentionedTeammates,
+  teammateFactsToPromptContext,
   _resetProfiles,
 } from '../lib/user-profiles.js';
 import {
   parseReminderTime,
   _resetReminders,
 } from '../lib/reminders.js';
+import {
+  appendChannelLog,
+  getChannelLog,
+  getChannelLogSince,
+  _resetChannelLog,
+} from '../lib/channel-log.js';
 
 // ---------------------------------------------------------------------------
 // Dedup
@@ -456,6 +466,31 @@ describe('buildSystemPrompt', () => {
     });
     assert.ok(prompt.includes('*text*'));
     assert.ok(prompt.includes('bold:'));
+  });
+
+  it('surfaces facts about other people mentioned, with a never-joke-about-life-notes guardrail', () => {
+    const prompt = buildSystemPrompt({
+      notionContext: '',
+      calendarContext: '',
+      capabilities: '',
+      intent: 'identity_person_lookup',
+      threadContext: '',
+      mentionedContext: '*Alice*:\nlife notes: left the company (~Aug 2026)',
+    });
+    assert.ok(prompt.includes('other people named in this message'));
+    assert.ok(prompt.includes('left the company'));
+    assert.ok(prompt.includes('never a joke, never a roast, never brought up unprompted'));
+  });
+
+  it('omits the mentioned-people block when there is nothing to say', () => {
+    const prompt = buildSystemPrompt({
+      notionContext: '',
+      calendarContext: '',
+      capabilities: '',
+      intent: 'general_qna',
+      threadContext: '',
+    });
+    assert.ok(!prompt.includes('other people named in this message'));
   });
 });
 
@@ -1269,6 +1304,146 @@ describe('user profiles', () => {
     });
     const profile = await getUserProfile('U011');
     assert.equal(profile.meanMoments.length, 0);
+  });
+
+  it('ambient messages (intent: null) do not skew intent distribution', async () => {
+    await updateUserProfile('U012', {
+      displayName: 'Priya',
+      message: 'give me the link',
+      intent: 'help_request',
+      channel: 'C1',
+    });
+    for (let i = 0; i < 5; i++) {
+      await updateUserProfile('U012', {
+        displayName: 'Priya',
+        message: 'just chatting in the channel',
+        intent: null,
+        channel: 'C1',
+      });
+    }
+    const profile = await getUserProfile('U012');
+    assert.equal(profile.intentCounts.help_request, 1);
+    assert.equal(profile.intentCounts.null, undefined);
+    assert.equal(Object.keys(profile.intentCounts).length, 1);
+  });
+
+  it('still records ambient messages in history', async () => {
+    await updateUserProfile('U013', {
+      displayName: 'Priya',
+      message: 'just chatting in the channel',
+      intent: null,
+      channel: 'C1',
+    });
+    const history = await getUserHistory('U013');
+    assert.equal(history.length, 1);
+    assert.equal(history[0].message, 'just chatting in the channel');
+  });
+
+  it('mergeChannelIntel appends and dedupes channel notes and life events', async () => {
+    await mergeChannelIntel('U014', {
+      displayName: 'Alice',
+      notes: ['loves cold brew'],
+      lifeEvents: [{ type: 'promoted', note: 'promoted to senior SDR', date: 'Jun 2026' }],
+    });
+    await mergeChannelIntel('U014', {
+      notes: ['loves cold brew', 'runs marathons'],
+      lifeEvents: [
+        { type: 'promoted', note: 'promoted to senior SDR', date: 'Jun 2026' }, // dupe, should not double up
+        { type: 'left', note: 'left the company', date: 'Aug 2026' },
+      ],
+    });
+    const profile = await getUserProfile('U014');
+    assert.deepEqual(profile.channelNotes, ['loves cold brew', 'runs marathons']);
+    assert.equal(profile.lifeEvents.length, 2);
+    assert.ok(profile.lifeEvents.some((e) => e.note === 'left the company'));
+  });
+
+  it('findMentionedTeammates matches known users by name and excludes the sender', () => {
+    const knownUsers = [
+      { userId: 'U020', displayName: 'Alice' },
+      { userId: 'U021', displayName: 'Bob' },
+    ];
+    const matches = findMentionedTeammates('did alice leave? asking for bob', knownUsers, 'U021');
+    assert.deepEqual(matches, [{ userId: 'U020', displayName: 'Alice' }]);
+  });
+
+  it('findMentionedTeammates does not match substrings of other words', () => {
+    const knownUsers = [{ userId: 'U020', displayName: 'Al' }];
+    const matches = findMentionedTeammates('already told you about that', knownUsers, null);
+    assert.equal(matches.length, 0);
+  });
+
+  it('teammateFactsToPromptContext exposes only channel notes and life events', async () => {
+    await updateUserProfile('U015', {
+      displayName: 'Owen',
+      message: "you're useless honestly",
+      intent: 'banter',
+      channel: 'C1',
+    });
+    await mergeChannelIntel('U015', {
+      notes: ['known for terrible puns'],
+      lifeEvents: [{ type: 'left', note: 'left the company', date: 'Aug 2026' }],
+    });
+    const profile = await getUserProfile('U015');
+    const facts = teammateFactsToPromptContext(profile);
+    assert.ok(facts.includes('terrible puns'));
+    assert.ok(facts.includes('left the company'));
+    assert.ok(!facts.includes('useless')); // meanMoments must not leak here
+    assert.ok(!facts.includes('vibe:'));
+  });
+
+  it('getKnownUsers reflects everyone with a saved profile', async () => {
+    await updateUserProfile('U016', { displayName: 'Dana', message: 'hey', intent: 'banter', channel: 'C1' });
+    const known = await getKnownUsers();
+    assert.ok(known.some((u) => u.userId === 'U016' && u.displayName === 'Dana'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Channel-wide ambient log
+// ---------------------------------------------------------------------------
+
+describe('channel log', () => {
+  beforeEach(() => _resetChannelLog());
+
+  it('appends messages in order', async () => {
+    await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: 'first', ts: '100.000001' });
+    await appendChannelLog('C1', { userId: 'U2', displayName: 'Bob', message: 'second', ts: '200.000001' });
+    const log = await getChannelLog('C1');
+    assert.equal(log.length, 2);
+    assert.equal(log[0].message, 'first');
+    assert.equal(log[1].message, 'second');
+  });
+
+  it('keeps different channels separate', async () => {
+    await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: 'in c1', ts: '100.000001' });
+    await appendChannelLog('C2', { userId: 'U1', displayName: 'Alice', message: 'in c2', ts: '100.000002' });
+    assert.equal((await getChannelLog('C1')).length, 1);
+    assert.equal((await getChannelLog('C2')).length, 1);
+  });
+
+  it('getChannelLogSince only returns entries newer than the checkpoint', async () => {
+    await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: 'old', ts: '100.000001' });
+    await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: 'new', ts: '300.000001' });
+    const since = await getChannelLogSince('C1', '200.000000');
+    assert.equal(since.length, 1);
+    assert.equal(since[0].message, 'new');
+  });
+
+  it('getChannelLogSince with no checkpoint returns everything', async () => {
+    await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: 'only', ts: '100.000001' });
+    const since = await getChannelLogSince('C1', null);
+    assert.equal(since.length, 1);
+  });
+
+  it('caps the log and drops the oldest entries', async () => {
+    for (let i = 0; i < 5010; i++) {
+      await appendChannelLog('C1', { userId: 'U1', displayName: 'Alice', message: `msg ${i}`, ts: `${i}.000001` });
+    }
+    const log = await getChannelLog('C1');
+    assert.equal(log.length, 5000);
+    assert.equal(log[0].message, 'msg 10'); // first 10 dropped
+    assert.equal(log[log.length - 1].message, 'msg 5009');
   });
 });
 

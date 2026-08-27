@@ -49,8 +49,11 @@ User @mentions bot in Slack
 | `lib/context.js` | Fetches Notion page content (currently limited, pages may be empty). |
 | `lib/calendar.js` | Fetches Google Calendar events (needs env vars configured). |
 | `lib/capabilities.js` | Runtime capability detection (what sources are connected). |
+| `lib/user-profiles.js` | KV-backed per-user profiles: history, personality, channel notes, life events, known-users index. |
+| `lib/channel-log.js` | Channel-wide ambient message log (raw feed across everyone, mined by memory-distill). |
+| `scripts/memory-distill.js` | Daily GitHub Actions job: extracts life events + banter notes from new ambient messages. |
 | `prompts/system.js` | System prompt for local Claude path. Casual SDR teammate tone. |
-| `tests/unit.test.js` | 94 unit tests covering all modules. |
+| `tests/unit.test.js` | Unit tests covering all modules. |
 
 ## Intent Routing
 
@@ -62,8 +65,27 @@ User @mentions bot in Slack
 | `help_request` | Yes | "has anyone put together slides for X", "how do I set up a demo" |
 | `calendar_whereabouts` | Yes | "where is ava", "what's on my calendar" |
 | `account_or_pipeline` | Yes | "what's the pipeline", "who owns X account" |
-| `identity_person_lookup` | Yes | "who is nick" |
+| `identity_person_lookup` | Yes, unless the name matches a known SDR teammate we already have local memory on | "who is nick", "did alice leave" |
 | `general_qna` | Yes | anything else |
+
+## Ambient Memory (sdr-playersonly only)
+
+Every message posted in the SDR friends channel (`SLACK_CHANNEL_ID`, default
+`C093Z82DK18` / sdr-playersonly) gets remembered, not just messages directed
+at the bot:
+- `api/slack-events.js` logs the sender's own message into their per-user
+  history (`lib/user-profiles.js`) and into a shared channel-wide log
+  (`lib/channel-log.js`), even when no trigger fires and the bot never replies.
+- A daily job (`scripts/memory-distill.js`, run via
+  `.github/workflows/memory-distill.yml`) reads new channel-log entries,
+  asks an LLM to pull out life events (left/promoted/new role) and banter-
+  worthy notes per person, and merges them into that person's profile.
+- When someone asks about a known teammate ("did alice leave?"), the bot
+  answers locally from this memory instead of relaying to Notion.
+- Departures are always phrased neutrally ("left the company") and are
+  facts to state plainly if asked, never banter or roast material - see the
+  guardrail in `prompts/system.js` and the extraction prompt in
+  `scripts/memory-distill.js`.
 
 ## Relay Flow
 
@@ -134,7 +156,7 @@ cd bot
 node --test tests/unit.test.js
 ```
 
-94 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims.
+200 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims, user profiles, ambient channel logging, and memory distillation helpers.
 
 ## Deploying
 

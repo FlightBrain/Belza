@@ -16,8 +16,22 @@ import { executeRelay, willAttemptRelay } from '../lib/relay.js';
 import { updateJob } from '../lib/relay-store.js';
 import { handleReaction } from '../lib/feedback.js';
 import { logTrace, traceId, logFeedback } from '../lib/braintrust.js';
-import { getUserProfile, getUserHistory, updateUserProfile, profileToPromptContext } from '../lib/user-profiles.js';
+import {
+  getUserProfile,
+  getUserHistory,
+  updateUserProfile,
+  profileToPromptContext,
+  getKnownUsers,
+  findMentionedTeammates,
+  teammateFactsToPromptContext,
+} from '../lib/user-profiles.js';
 import { createReminder, parseReminderTime, getUserReminders } from '../lib/reminders.js';
+import { appendChannelLog } from '../lib/channel-log.js';
+
+// The SDR friends channel (sdr-playersonly). Ambient logging - remembering
+// every message, not just ones directed at the bot - is scoped to just this
+// channel, never the relay channel or anywhere else the bot sits.
+const AMBIENT_LOG_CHANNEL_ID = process.env.SLACK_CHANNEL_ID || 'C093Z82DK18';
 
 // v2 - force cold start after deploy
 export const config = {
@@ -72,6 +86,11 @@ async function processEvent(body) {
     return;
   }
 
+  // Clean Slack markup up front - needed for ambient logging below as well
+  // as the rest of the pipeline once a trigger is confirmed.
+  const cleanedText = cleanSlackText(event.text);
+  if (!cleanedText) return;
+
   // In a DM there's no ambiguity about who a message is for - it's always
   // the bot, no @mention needed. Only real multi-person surfaces (channels,
   // group DMs) need the mention/thread-continuation logic below.
@@ -92,13 +111,32 @@ async function processEvent(body) {
   }
 
   if (!trigger) {
+    // Not directed at the bot, but if it's in the SDR friends channel, still
+    // remember it happened - ambient memory, fed continuously instead of
+    // only on bot-directed messages. Fire-and-forget so this never adds
+    // latency or risks the "no trigger" path.
+    if (event.channel === AMBIENT_LOG_CHANNEL_ID && event.user) {
+      resolveUser(event.user).then((displayName) => {
+        return Promise.all([
+          updateUserProfile(event.user, {
+            displayName,
+            message: cleanedText,
+            intent: null,
+            channel: event.channel,
+          }),
+          appendChannelLog(event.channel, {
+            userId: event.user,
+            displayName,
+            message: cleanedText,
+            ts: event.ts,
+          }),
+        ]);
+      }).catch((e) => console.error('ambient log failed:', e.message));
+    }
+
     console.log(`no trigger: ignoring channel=${event.channel} thread_ts=${event.thread_ts || 'none'} ts=${event.ts}`);
     return;
   }
-
-  // Clean Slack markup before further processing
-  const cleanedText = cleanSlackText(event.text);
-  if (!cleanedText) return;
 
   // Classify intent for behavioral constraints
   const intent = classifyIntent(cleanedText);
@@ -111,6 +149,14 @@ async function processEvent(body) {
   const replyThreadTs =
     event.thread_ts || (trigger === 'direct' ? event.ts : undefined);
 
+  // Known teammates mentioned by name (e.g. "did alice leave?"). If we have
+  // our own grounded memory about them, answer locally instead of relaying -
+  // the Notion agent has no idea about Slack-derived facts like who left or
+  // got promoted.
+  const knownUsers = await getKnownUsers();
+  const mentionedTeammates = findMentionedTeammates(cleanedText, knownUsers, event.user);
+  const hasLocalPersonLookup = intent === 'identity_person_lookup' && mentionedTeammates.length > 0;
+
   // --- RELAY PATH ---
   // Only relay when the intent genuinely needs grounded Notion/Calendar data.
   // If relay returns a non-answer, it returns null and we fall through to local.
@@ -120,23 +166,25 @@ async function processEvent(body) {
   // The relay poll can take up to ~55s (lib/relay-config.js RELAY_TIMEOUT_MS),
   // which reads as the bot going silent/stuck in a fast-moving thread. Post a
   // quick filler first so it's clear something is happening.
-  if (willAttemptRelay({ event, cleanedText, intent, hasWorkSignal: workSignal })) {
+  if (!hasLocalPersonLookup && willAttemptRelay({ event, cleanedText, intent, hasWorkSignal: workSignal })) {
     const filler = RELAY_FILLERS[Math.floor(Math.random() * RELAY_FILLERS.length)];
     await postToSlack({ channel: event.channel, text: filler, thread_ts: replyThreadTs });
   }
 
   let relayResult = null;
   const relayStartedAt = new Date();
-  try {
-    relayResult = await executeRelay({
-      event,
-      cleanedText,
-      threadContext,
-      intent,
-      hasWorkSignal: workSignal,
-    });
-  } catch (e) {
-    console.error(`relay error: ${e.message}`);
+  if (!hasLocalPersonLookup) {
+    try {
+      relayResult = await executeRelay({
+        event,
+        cleanedText,
+        threadContext,
+        intent,
+        hasWorkSignal: workSignal,
+      });
+    } catch (e) {
+      console.error(`relay error: ${e.message}`);
+    }
   }
   const relayFinishedAt = new Date();
 
@@ -352,6 +400,19 @@ async function processEvent(body) {
     : [null, []];
   const userContext = profileToPromptContext(userProfile, userHistory);
 
+  // Facts about any OTHER teammates named in this message - only the
+  // durable, team-visible slice (channel notes, life events), never their
+  // private interaction history with the bot.
+  const mentionedContext = (
+    await Promise.all(
+      mentionedTeammates.map(async (u) => {
+        const profile = await getUserProfile(u.userId);
+        const facts = teammateFactsToPromptContext(profile);
+        return facts ? `*${u.displayName}*:\n${facts}` : null;
+      }),
+    )
+  ).filter(Boolean).join('\n\n');
+
   // Only pull Notion/calendar context when the message actually calls for it —
   // stuffing every reply with SDR Hub content and calendar lookups wastes
   // calls and pollutes answers to unrelated questions.
@@ -374,6 +435,7 @@ async function processEvent(body) {
     threadContext,
     senderName,
     userContext,
+    mentionedContext,
   });
 
   const llmStartedAt = new Date();
