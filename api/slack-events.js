@@ -80,7 +80,10 @@ async function processEvent(body) {
     }
   }
 
-  if (!trigger) return;
+  if (!trigger) {
+    console.log(`no trigger: ignoring channel=${event.channel} thread_ts=${event.thread_ts || 'none'} ts=${event.ts}`);
+    return;
+  }
 
   // Clean Slack markup before further processing
   const cleanedText = cleanSlackText(event.text);
