@@ -439,7 +439,13 @@ async function processEvent(body) {
   });
 
   const llmStartedAt = new Date();
-  const result = await callClaude(systemPrompt, cleanedText, { senderName, intent });
+  let result;
+  try {
+    result = await callClaude(systemPrompt, cleanedText, { senderName, intent });
+  } catch (e) {
+    console.error(`claude call failed: ${e.message}`);
+    result = { reply: "hit a snag on my end, try that again in a sec.", model: null, tokens: {} };
+  }
   const llmFinishedAt = new Date();
   if (!result?.reply || result.reply === '[SKIP]') return;
 
