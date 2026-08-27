@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   const createRes = await fetch('https://api.braintrust.dev/v1/project', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Claudesington' }),
+    body: JSON.stringify({ name: 'Belza' }),
   });
   const project = await createRes.json();
   results.project = { id: project.id, name: project.name, org: project.org_name };
