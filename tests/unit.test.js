@@ -2845,11 +2845,37 @@ describe('neutralizeDepartureStrict', () => {
     assert.ok(!/fired|sacked/i.test(neutralizeDepartureStrict('got fired and sacked')));
   });
 
-  it('also handles the noun and passive forms memory-distill misses', () => {
-    for (const t of ['let go in the reorg', 'after the layoffs', 'was pushed out', 'ousted in june', 'dismissed last month', 'no longer with the company']) {
+  it('also handles the verb and passive forms memory-distill misses', () => {
+    for (const t of ['let go in the reorg', 'was pushed out', 'ousted in june', 'dismissed last month', 'is no longer with the company']) {
       assert.match(neutralizeDepartureStrict(t), /left the company/, t);
-      assert.ok(!/let go|layoff|pushed out|ousted|dismissed|no longer with/i.test(neutralizeDepartureStrict(t)), t);
+      assert.ok(!/let go|pushed out|ousted|dismissed|no longer with/i.test(neutralizeDepartureStrict(t)), t);
     }
+  });
+
+  it('maps NOUN forms to a neutral noun, not to the verb phrase', () => {
+    // "after the layoffs" must not become "after the left the company".
+    // The whole point of neutralizing is that the result gets written into a
+    // profile and read back out in a Slack reply, so it has to be a sentence.
+    assert.equal(neutralizeDepartureStrict('after the layoffs in june'), 'after the departures in june');
+    assert.equal(neutralizeDepartureStrict('the firings last quarter'), 'the departures last quarter');
+    for (const t of ['after the layoffs in june', 'the firings last quarter']) {
+      assert.ok(!/layoff|firing/i.test(neutralizeDepartureStrict(t)), t);
+      assert.ok(!/the left the company/i.test(neutralizeDepartureStrict(t)), t);
+    }
+  });
+
+  it('replaces auxiliary + participle as one unit so the result reads', () => {
+    // "alec was fired" became "alec was left the company" before this.
+    assert.equal(neutralizeDepartureStrict('alec was fired last friday'), 'alec left the company last friday');
+    assert.equal(neutralizeDepartureStrict('sacha got laid off in the reorg'), 'sacha left the company in the reorg');
+    assert.equal(neutralizeDepartureStrict('owen was terminated'), 'owen left the company');
+    assert.equal(neutralizeDepartureStrict('ryan is no longer with the company'), 'ryan left the company');
+  });
+
+  it('treats a resignation as a plain departure', () => {
+    // Without this the sensitive filter's "resigned" pattern dropped the note
+    // after neutralization and a real, plainly-stateable fact was lost.
+    assert.equal(neutralizeDepartureStrict('duncan resigned'), 'duncan left the company');
   });
 
   it('collapses a doubled substitution into readable phrasing', () => {
@@ -3762,5 +3788,87 @@ describe('injection scoring and logging', () => {
     assert.ok(line.includes('categories=[override]'));
     assert.ok(line.includes('ignore_previous'));
     assert.ok(line.endsWith('SUSPICIOUS'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 review: departure-guardrail holes found by verifying the agent's work
+// ---------------------------------------------------------------------------
+
+describe('regression: job anxiety is dropped, never laundered into a fact', () => {
+  // The agent's report claimed this hole was closed. It was closed only for the
+  // literal phrase "might get fired". Everything below reached
+  // sanitizeLifeEvent, missed the sensitive filter, and was then rewritten by
+  // the neutralizer into a tidy-looking durable note about that person -
+  // exactly the failure the departure guardrail exists to prevent.
+  const MUST_DROP = [
+    'i think im getting fired',
+    'worried about getting laid off',
+    'i might get fired if i miss quota',
+    'scared ill be fired',
+    'alec is getting fired friday',
+    'im getting let go next week',
+    'on the chopping block',
+    'my days are numbered here',
+    'im resigning next month',
+  ];
+
+  for (const note of MUST_DROP) {
+    it(`drops ${JSON.stringify(note)}`, () => {
+      const r = sanitizeLifeEvent({ type: 'left', note, date: '' });
+      assert.equal(r.event, null, `kept: ${JSON.stringify(r.event?.note)}`);
+      assert.ok(r.reason, 'a drop must record why');
+    });
+  }
+
+  it('never emits the laundered phrasing that made distress look like a fact', () => {
+    for (const note of MUST_DROP) {
+      const r = sanitizeLifeEvent({ type: 'left', note, date: '' });
+      assert.ok(
+        !/left the company/i.test(r.event?.note || ''),
+        `${note} was laundered into: ${r.event?.note}`,
+      );
+    }
+  });
+});
+
+describe('regression: plain departures stay plain, neutral, and grammatical', () => {
+  const CASES = [
+    ['alec was fired last friday', 'alec left the company last friday'],
+    ['sacha got laid off in the reorg', 'sacha left the company in the reorg'],
+    ['owen was terminated', 'owen left the company'],
+    ['duncan resigned', 'duncan left the company'],
+    ['ryan is no longer with the company', 'ryan left the company'],
+    ['maddy left the company', 'maddy left the company'],
+  ];
+
+  for (const [input, expected] of CASES) {
+    it(`${JSON.stringify(input)} -> ${JSON.stringify(expected)}`, () => {
+      const r = sanitizeLifeEvent({ type: 'left', note: input, date: '' });
+      assert.ok(r.event, `dropped a real departure fact: ${r.reason}`);
+      assert.equal(r.event.note, expected);
+    });
+  }
+
+  it('never leaves a stranded auxiliary', () => {
+    for (const [input] of CASES) {
+      const out = sanitizeLifeEvent({ type: 'left', note: input, date: '' }).event.note;
+      assert.ok(!/\b(was|were|got|is|are)\s+left the company\b/i.test(out), out);
+    }
+  });
+
+  it('never keeps a word that reads as mocking someone for leaving', () => {
+    for (const [input] of CASES) {
+      const out = sanitizeLifeEvent({ type: 'left', note: input, date: '' }).event.note;
+      assert.ok(!/\b(fired|laid off|sacked|canned|axed|terminated|booted)\b/i.test(out), out);
+    }
+  });
+
+  it('keeps non-departure life events untouched', () => {
+    for (const note of ['nick got promoted to senior AE', 'ava moved to the enterprise team']) {
+      const r = sanitizeLifeEvent({ type: 'promoted', note, date: '' });
+      assert.ok(r.event, `dropped: ${r.reason}`);
+      assert.equal(r.event.note, note);
+    }
   });
 });

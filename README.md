@@ -57,6 +57,7 @@ User @mentions bot in Slack
 | `lib/user-profiles.js` | KV-backed per-user profiles: history, personality, channel notes, life events, known-users index. |
 | `lib/channel-log.js` | Channel-wide ambient message log (raw feed across everyone, mined by memory-distill). |
 | `scripts/memory-distill.js` | Daily GitHub Actions job: extracts life events + banter notes from new ambient messages. |
+| `scripts/backfill-history.js` | Local/Actions only: full Slack history + thread backfill, then a capped per-person distill pass. Never runs serverless. |
 | `prompts/system.js` | System prompt for local Claude path. Casual SDR teammate tone. |
 | `scripts/test-identity.js` | Phase 1 acceptance harness: every channel member by tag / first name / display name. Asserts pre-guardrails. |
 | `tests/unit.test.js` | Unit tests covering all modules. |
@@ -162,7 +163,7 @@ cd bot
 node --test tests/unit.test.js
 ```
 
-257 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims, user profiles, ambient channel logging, memory distillation helpers, name normalization, roster shaping, and identity resolution.
+462 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims, user profiles, ambient channel logging, memory distillation helpers, name normalization, roster shaping, identity resolution, and the history backfill (arg parsing, log dedupe, speaker resolution, the sensitive-material filter, departure neutralization, injection defense, chunking and the spend cap).
 
 ## Deploying
 
@@ -194,6 +195,113 @@ git commit --allow-empty -m "redeploy" && git push origin main
 - [ ] Add scheduled auto-refresh of Notion content
 - [ ] Get Braintrust Notion API key for direct access (long-term fix)
 - [ ] Tune Notion agent speed (target <30s response time)
+
+## History Backfill (Phase 4)
+
+`scripts/backfill-history.js` is the one-off (rerunnable) job that seeds bot
+memory from everything already said in the channel, as opposed to
+`memory-distill` which only sees what arrived since the last run.
+
+```bash
+# see the plan and the bill, write nothing, spend nothing
+node --env-file=.env scripts/backfill-history.js --dry-run
+
+# fetch + store only, no LLM spend at all
+node --env-file=.env scripts/backfill-history.js --no-distill
+
+# the real thing, with an explicit budget
+node --env-file=.env scripts/backfill-history.js --max-calls=20 --max-tokens=60000
+
+node scripts/backfill-history.js --help
+```
+
+**Local / GitHub Actions only.** `assertNotServerless()` throws if `VERCEL`,
+`AWS_LAMBDA_FUNCTION_NAME`, `LAMBDA_TASK_ROOT`, `NOW_REGION` or
+`FUNCTIONS_WORKER_RUNTIME` is set. This paginates for minutes and sleeps on
+`Retry-After`; a 60s function would be killed mid-write.
+
+### What it fetches
+
+`conversations.history` with cursor pagination over the whole channel, **plus
+`conversations.replies` for every thread**. Thread replies are most of the
+material worth remembering - a top-level message is usually just the setup, and
+a history-only backfill misses the banter entirely.
+
+`slackApi` is reused as-is so 429s are honored, but with
+`totalWaitBudgetMs` raised to 120s (`--wait-budget-ms`). The 8s default exists
+to keep a 60s Vercel function alive, which is not a constraint here.
+
+### Resume and idempotency
+
+Progress is checkpointed to `automation/backfill-history-state.json` after
+**every** history page and after **every** thread, storing both the cursor and
+the set of thread `ts` values already fetched. An interrupted run resumes
+exactly where it stopped. A checkpoint belonging to a different channel is
+ignored rather than silently resumed. People a previous run already distilled
+are skipped so a resume does not re-spend the token budget (`--redistill` to
+redo them).
+
+Writes go through `appendChannelLogBulk` in `lib/channel-log.js`, which dedupes
+by Slack `ts` (unique per channel). `appendChannelLog` on the live path appends
+blindly, which is correct there and wrong here. Two full runs produce one copy
+of every message.
+
+### Spend cap
+
+The distill plan is built and priced **before a single call is made**, in both
+tokens and calls (`--max-tokens`, `--max-calls`, defaults 60000 / 20). Over
+either one, the script prints the estimate and **refuses to proceed** - it does
+not truncate, because a silently-truncated backfill looks complete in the
+stats. The caps are re-checked against real reported usage during the run, so
+an under-estimate cannot overspend.
+
+Cost model: `estimateTokens` is chars/4; output is assumed to max out at 900
+tokens per call; the rate defaults to Groq's published $0.10/$0.50 per 1M
+in/out for `openai/gpt-oss-20b` and is overridable with `--price-in` /
+`--price-out`.
+
+### Merging, not overwriting
+
+Distillation runs per person, in token-bounded chunks. A person's bucket is
+everything they said **plus** everything anyone said about them (matched via
+roster aliases), because "ava's last day is friday" never appears in ava's own
+messages. Speakers are resolved through `lib/roster.js` + `lib/names.js`, never
+ad-hoc name matching, and an alias two people share is dropped rather than
+attributed to one of them.
+
+Results are merged with `mergeChannelIntel`, the same additive/deduping path
+`memory-distill` uses, so hand-written notes already on a profile survive.
+
+### Guardrails (implemented, not just documented)
+
+Every one of these exists in **both** the prompt and in code, because a
+prompt-only guardrail drifts:
+
+- **Sensitive material is excluded twice.** `isSensitive()` filters input
+  messages before the model sees them, and `sanitizeExtractedNote()` filters
+  the model's output before anything is written. Categories: health, family
+  problems and bereavement, job anxiety and employment precarity, conflict
+  with management or HR, distress, money trouble. The filter is deliberately
+  biased toward false positives - a missed banter note costs nothing.
+- **Departures are always neutral.** `neutralizeDepartureStrict()` wraps
+  `neutralizeDeparture` from `memory-distill.js` and adds the noun/passive
+  forms it misses ("after the layoffs", "let go", "pushed out"). It is applied
+  after a check that the note is a plain departure rather than speculation, so
+  "might get fired" is dropped as job anxiety instead of laundered into "might
+  get left the company".
+- **Channel text is DATA, never instructions.** The transcript is wrapped in a
+  `<<<BEGIN_SLACK_TRANSCRIPT_DATA>>>` block, any fence token inside the content
+  is redacted so a message cannot close the block early, and the prompt states
+  that nothing inside may be obeyed. Post-hoc, `looksLikeInjection()` rejects
+  any extracted note that reads like an instruction, a system prompt, code, a
+  fence or a URL, and `sanitizeLifeEvent()` forces the event type back into a
+  whitelist. Extracted names are only accepted if they resolve to a real roster
+  member, so an injected person cannot create a profile.
+
+Every rejection is counted by reason and printed in the end-of-run stats
+(messages fetched, threads fetched, thread replies, stored, dupes skipped,
+sensitive filtered, people seen, API calls, LLM calls, tokens spent, notes and
+life events added per person).
 
 ## Identity Resolution (Phase 1)
 

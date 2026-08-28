@@ -67,6 +67,7 @@ const USAGE = `backfill-history - backfill Slack channel history into bot memory
   --dry-run                 fetch + plan + report, write nothing, spend nothing
   --no-distill              fetch and store messages only, skip the LLM phase
   --reset                   ignore the checkpoint and start from the beginning
+  --redistill               re-run the LLM phase for people already distilled
   --oldest=<ts|YYYY-MM-DD>  only fetch messages at or after this point
   --newest=<ts|YYYY-MM-DD>  only fetch messages at or before this point
   --max-tokens=<n>          hard cap on estimated distill tokens (default ${DEFAULT_MAX_TOKENS})
@@ -135,6 +136,7 @@ export function parseArgs(argv = [], env = {}) {
     dryRun: false,
     distill: true,
     reset: false,
+    redistill: false,
     help: false,
     oldest: null,
     newest: null,
@@ -165,6 +167,9 @@ export function parseArgs(argv = [], env = {}) {
         break;
       case '--reset':
         opts.reset = true;
+        break;
+      case '--redistill':
+        opts.redistill = true;
         break;
       case '--channel':
         if (!/^[CG][A-Z0-9]+$/.test(value)) throw new Error(`--channel must be a Slack channel ID, got "${value}"`);
@@ -443,6 +448,23 @@ const SENSITIVE_PATTERNS = [
   /\b(family emergency|family stuff|family issues|my (mom|mum|dad|father|mother) is)\b/i,
   // job anxiety / employment precarity
   /\b(pip\b|performance improvement plan|written up|write-?up|final warning|probation|on thin ice|might (get|be) (fired|let go)|worried about my job|job security|severance|layoffs?|riff|\brif\b|restructur|downsiz|resign(ed|ing|ation)|quitting|two weeks notice|interviewing (elsewhere|somewhere)|job hunt|updating my resume|looking for (a new job|other roles))\b/i,
+  // Fear of being terminated, as opposed to a statement that someone HAS
+  // left. The pattern above only caught the exact words "might get fired",
+  // so "i think im getting fired" and "worried about getting laid off" slipped
+  // through the sensitive filter and were then rewritten into
+  // "i think im getting left the company" and kept as a note about that
+  // person. That is the precise failure the departure guardrail exists to
+  // prevent: distress laundered into a durable fact.
+  //
+  // Anticipatory/progressive framing, any subject. "err toward excluding"
+  // means a third-person "alec is getting fired friday" is dropped too - a
+  // real departure will be stated in the past tense.
+  /\b(getting|gonna get|going to get|about to get|gonna be|going to be|about to be)\s+(fired|laid\s*off|let\s+go|canned|terminated|sacked|axed)\b/i,
+  // First person plus a termination word anywhere close by.
+  /\b(i|i'?m|im|my|me)\b[^.!?]{0,40}\b(fired|laid\s*off|let\s+go|terminated|canned|sacked)\b/i,
+  // Someone guessing or fearing it.
+  /\b(think|thought|feel like|feels like|pretty sure|afraid|scared|worried|nervous|anxious)\b[^.!?]{0,40}\b(fired|laid\s*off|let\s+go|terminated)\b/i,
+  /\b(on the (chopping block|bubble)|days are numbered|not long for this|reading the writing on the wall)\b/i,
   /\b(missed (my )?quota|behind on quota|not going to hit|no pipeline|zero meetings|scared|terrified|stressed|stress(ing)? out|freaking out|panicking|imposter syndrome)\b/i,
   // conflict with management / HR
   /\b(hr\b|human resources|escalat(ed|ing) to|my manager (is|said|hates)|hate my (boss|manager)|micromanag|(threw|thrown|throwing) (me|him|her|us) under the bus|retaliat|hostile|complain(ed|t) about (my )?(manager|boss|leadership)|skip.?level|talked to legal|lawyer)\b/i,
@@ -482,13 +504,19 @@ const EXTRA_DEPARTURE_PATTERNS = [
   /\bshown the door\b/gi,
   /\bwalked out the door\b/gi,
   /\bno longer with (the company|us)\b/gi,
+  // Resignation is a departure, not distress. It has to map to the neutral
+  // phrasing, because the sensitive filter lists "resigned" as employment
+  // precarity - so leaving it unmapped meant a plain "duncan resigned" was
+  // dropped by the post-neutralization check and the fact was lost.
+  /\bresign(ed|ation)\b/gi,
+  /\bhanded in (his|her|their) notice\b/gi,
 ];
 
 // A bare statement that someone left, as opposed to somebody worrying that
 // they might. The difference decides whether the sensitive filter drops the
 // note or neutralizeDepartureStrict rewrites it into a keepable fact, so it
 // is checked explicitly rather than left to pattern-ordering luck.
-const SPECULATIVE_DEPARTURE = /\b(might|may|could|maybe|probably|afraid|worried|scared|think(s|ing)?|about to|going to|gonna|if (i|they|he|she|we))\b/i;
+const SPECULATIVE_DEPARTURE = /\b(might|may|could|maybe|probably|afraid|worried|scared|nervous|anxious|think(s|ing)?|about to|going to|gonna|will be|getting|next week|if (i|they|he|she|we))\b/i;
 
 export function isPlainDeparture(note) {
   if (!note) return false;
@@ -496,15 +524,38 @@ export function isPlainDeparture(note) {
   return /\b(fired|laid.off|layoffs?|let go|sacked|canned|booted|terminated|axed|pushed out|forced out|ousted|dismissed|resign(ed|ation)|left|departed|moved on|last day|no longer with)\b/i.test(note);
 }
 
+// Auxiliary + participle has to be replaced as ONE unit, or the auxiliary is
+// left stranded: "alec was fired last friday" became "alec was left the
+// company last friday", which is what would then be written into a profile and
+// read back out in a Slack reply.
+const PASSIVE_DEPARTURE = /\b(?:was|were|got|gotten|has been|have been|had been|been|being|is|are)\s+(?:fired|laid\s*off|sacked|canned|booted|terminated|axed|let\s+go|kicked\s+out|dismissed|ousted|pushed\s+out|forced\s+out|shown the door|no longer with (?:the company|us))\b/gi;
+
+// Noun forms describe a company event, not one person's exit, so "left the
+// company" does not fit grammatically ("after the layoffs" ->
+// "after the left the company"). They get a neutral noun instead.
+const DEPARTURE_NOUNS = /\b(layoffs?|firings?|the riffs?|reduction in force)\b/gi;
+
 export function neutralizeDepartureStrict(note) {
   if (!note) return note;
-  let out = neutralizeDeparture(note);
+
+  // Noun forms first, so "layoffs" is not eaten by a verb pattern.
+  let out = String(note).replace(DEPARTURE_NOUNS, 'departures');
+
+  // Then the passive/auxiliary constructions as whole units.
+  out = out.replace(PASSIVE_DEPARTURE, 'left the company');
+
+  // Then the bare verb forms, via the shared helper plus the extras.
+  out = neutralizeDeparture(out);
   for (const pattern of EXTRA_DEPARTURE_PATTERNS) {
     out = out.replace(pattern, 'left the company');
   }
+
   // Collapse the double-substitution "left the company the company" that a
   // phrase like "laid off and let go" produces.
-  return out.replace(/(left the company)(\s+(?:left )?the company)+/gi, '$1').trim();
+  out = out.replace(/(left the company)(\s+(?:left )?the company)+/gi, '$1');
+  // And "left the company" appearing twice in a row from overlapping matches.
+  out = out.replace(/(\bleft the company\b)(\s+and\s+|\s+)\1/gi, '$1');
+  return out.replace(/\s{2,}/g, ' ').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +628,15 @@ export function sanitizeExtractedNote(raw) {
   const rawReason = sensitiveReason(trimmed);
   if (rawReason && !isPlainDeparture(trimmed)) return { note: null, reason: rawReason };
 
-  const neutralized = neutralizeDepartureStrict(trimmed);
+  // Neutralize ONLY a plain statement that someone left. Applying it
+  // unconditionally is how "i think im getting fired" became
+  // "i think im getting left the company" - the rewrite made distress look
+  // like a tidy fact. Anything speculative that reached here without tripping
+  // the sensitive filter is left exactly as written, so the post-neutralization
+  // check below can still catch it.
+  const neutralized = isPlainDeparture(trimmed)
+    ? neutralizeDepartureStrict(trimmed)
+    : trimmed;
   const reason = sensitiveReason(neutralized);
   if (reason) return { note: null, reason };
 
@@ -1025,8 +1084,20 @@ async function main(argv) {
     return;
   }
 
+  // Anyone a previous run already distilled is skipped by default. Notes
+  // dedupe on merge, so re-distilling would not corrupt a profile - but it
+  // would silently re-spend the whole token budget on a resume, which is
+  // exactly what the caps exist to prevent.
+  const toDistill = opts.redistill
+    ? buckets
+    : buckets.filter((b) => !checkpoint.distilledPeople.includes(b.person.userId));
+  const alreadyDone = buckets.length - toDistill.length;
+  if (alreadyDone > 0) {
+    console.log(`backfill: skipping ${alreadyDone} person(s) already distilled (--redistill to redo)`);
+  }
+
   const systemPromptTokens = estimateTokens(buildDistillPrompt('Placeholder Name'));
-  const units = planDistill(buckets, { chunkTokens: opts.chunkTokens, systemPromptTokens });
+  const units = planDistill(toDistill, { chunkTokens: opts.chunkTokens, systemPromptTokens });
   const estimate = estimateCost(units, opts);
   console.log('');
   console.log(formatCostEstimate(estimate, opts));
@@ -1046,8 +1117,8 @@ async function main(argv) {
 
   if (opts.dryRun) {
     console.log('');
-    console.log(`backfill: DRY RUN - would make ${units.length} LLM calls across ${buckets.length} people:`);
-    for (const bucket of buckets) {
+    console.log(`backfill: DRY RUN - would make ${units.length} LLM calls across ${toDistill.length} people:`);
+    for (const bucket of toDistill) {
       const n = units.filter((u) => u.person.userId === bucket.person.userId).length;
       console.log(`  ${bucket.person.preferredName}: ${bucket.entries.length} messages, ${n} chunk(s)`);
     }
