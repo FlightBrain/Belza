@@ -9,12 +9,19 @@
 // a signing secret - not even a prefix or a length, which are enough to
 // fingerprint a rotation. `configured: true` is all anyone needs.
 
+import { getRelayConfig } from '../lib/relay-config.js';
+
 const present = (name) => Boolean(process.env[name]);
 
 export default function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
-  const relayEnabled = process.env.RELAY_ENABLED === 'true';
+  // Read the relay config through getRelayConfig() rather than re-deriving it
+  // from env here. The first version of this file duplicated the parsing and
+  // immediately misreported the allowlist as empty, because it lacked the
+  // default that relay-config applies - a second source of truth disagreeing
+  // with the first, which is the exact bug this deploy removed elsewhere.
+  const relay = getRelayConfig();
 
   return res.status(200).json({
     commit: process.env.VERCEL_GIT_COMMIT_SHA || 'local',
@@ -24,17 +31,15 @@ export default function handler(req, res) {
     deployed_at: process.env.VERCEL_DEPLOYMENT_ID ? undefined : null,
 
     relay: {
-      enabled: relayEnabled,
-      channel_id: process.env.RELAY_CHANNEL_ID || 'C0AQCKR9M2S (default)',
-      timeout_ms: parseInt(process.env.RELAY_TIMEOUT_MS || '55000', 10),
-      poll_interval_ms: parseInt(process.env.RELAY_POLL_INTERVAL_MS || '3000', 10),
-      // The important one: an empty allowlist means the poller accepts a reply
-      // from ANY responder in the relay channel.
-      allowlist: (process.env.RELAY_BOT_USER_IDS || '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      debug_logging: process.env.RELAY_DEBUG_LOGGING === 'true',
+      enabled: relay.enabled,
+      channel_id: relay.channelId,
+      timeout_ms: relay.timeoutMs,
+      poll_interval_ms: relay.pollIntervalMs,
+      // Who may answer a relay request. An empty list now means "nobody",
+      // which would silently disable the relay - so it is worth seeing.
+      allowlist: relay.botUserIds,
+      allowlist_source: process.env.RELAY_BOT_USER_IDS ? 'env' : 'code default',
+      debug_logging: relay.debugLogging,
     },
 
     slack: {
