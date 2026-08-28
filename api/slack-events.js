@@ -11,6 +11,7 @@ import { buildSystemPrompt } from '../prompts/system.js';
 import { fitSections, budgetLogLine, RECOMMENDED_PROMPT_BUDGET_TOKENS } from '../lib/token-budget.js';
 import { callClaude } from '../lib/claude.js';
 import { applyGuardrails } from '../lib/guardrails.js';
+import { enforceAnswerFloor, enforcePronouns } from '../lib/answer-floor.js';
 import { redactForChannel, isPublicSurface } from '../lib/source-visibility.js';
 import { executeRelay, willAttemptRelay } from '../lib/relay.js';
 import { updateJob } from '../lib/relay-store.js';
@@ -268,7 +269,7 @@ async function processEventInner(body, background) {
       text = "couldn't refresh the roster just now, slack pushed back. try again in a minute.";
     }
 
-    await postToSlack({ channel: event.channel, text, thread_ts: replyThreadTs });
+    await postToSlack({ channel: event.channel, text: applyGuardrails(text), thread_ts: replyThreadTs });
     return;
   }
 
@@ -281,6 +282,10 @@ async function processEventInner(body, background) {
     roster,
     botUserId,
     excludeUserId: event.user,
+    // Only an explicit person lookup should match an APP by name. "who is
+    // Notion" must resolve so the model is told it's an app rather than being
+    // left to invent a colleague; "whats the notion pricing page" must not.
+    includeBots: intent === 'identity_person_lookup',
   });
 
   // An ambiguous name must be asked about, never guessed - but only when the
@@ -294,7 +299,9 @@ async function processEventInner(body, background) {
     if (intent === 'identity_person_lookup') {
       const question = ambiguityPrompt(resolved.ambiguous);
       console.log(`identity: ambiguous ${JSON.stringify(aliases)}, asking`);
-      await postToSlack({ channel: event.channel, text: question, thread_ts: replyThreadTs });
+      // Guarded like any other reply: it interpolates roster names and titles,
+      // and every outbound string should pass through one filter.
+      await postToSlack({ channel: event.channel, text: applyGuardrails(question), thread_ts: replyThreadTs });
       // Still record the turn. This reply path was previously invisible to
       // both the profile store and Braintrust. Full span tracing for it lands
       // in Phase 3 alongside the rest of the instrumentation.
@@ -560,7 +567,7 @@ async function processEventInner(body, background) {
 
     await postToSlack({
       channel: event.channel,
-      text: ack,
+      text: applyGuardrails(ack),
       thread_ts: replyThreadTs,
     });
     return;
@@ -602,9 +609,12 @@ async function processEventInner(body, background) {
         // as check-reminders.js used to claim - Vercel Hobby caps cron at once
         // per day per job. Promising a precise time we cannot hit makes the bot
         // look broken rather than limited.
-        text:
+        // Guarded because aboutText is the user's own words echoed back, so it
+        // can carry a raw user ID or formatting the guardrails exist to clean.
+        text: applyGuardrails(
           `got it ${sName}, noted for ${timeStr} PT: "${aboutText}". ` +
-          `heads up, i only check reminders once a day right now so it might land late.`,
+            `heads up, i only check reminders once a day right now so it might land late.`,
+        ),
         thread_ts: replyThreadTs,
       });
 
@@ -696,9 +706,40 @@ async function processEventInner(body, background) {
   const llmFinishedAt = new Date();
   if (!result?.reply || result.reply === '[SKIP]') return;
 
+  // ANSWER FLOOR. If we loaded grounded facts about someone and the model still
+  // returned a bare deflection - or invented a referral to look helpful, which
+  // it did in the real channel by pointing at Maddy Ahlborn about a person she
+  // has no connection to - rebuild the reply so it says plainly what it does
+  // not know and then offers what it does. Never invents the missing fact, and
+  // never volunteers a departure. See lib/answer-floor.js.
+  const floor = enforceAnswerFloor({
+    reply: result.reply,
+    people: mentionedFacts.map((m) => ({ name: m.name, facts: m.facts })),
+  });
+  if (floor.applied) {
+    console.warn(
+      `answer-floor: rewrote a ${floor.reason} despite ${mentionedFacts.length} person(s) of facts. ` +
+        `original=${JSON.stringify((floor.original || '').slice(0, 120))}`,
+    );
+  }
+  // PRONOUN GUARD. The prompt tells the model that pronouns are a fact and to
+  // say "they" when none are on file. It still doesn't comply: real output for
+  // a person with no pronoun data was "he's the guy who still runs a 1080ti".
+  // Prompt-only fixes drift, so this enforces it.
+  const pronouns = enforcePronouns({
+    reply: floor.reply,
+    people: resolved.people.filter((p) => !p.isBot).map((p) => ({ name: p.preferredName, pronouns: p.pronouns })),
+  });
+  if (pronouns.applied) {
+    console.warn(`pronoun-guard: rewrote ${pronouns.rewrites} gendered pronoun(s) for people with no pronoun data`);
+  }
+
+  const finalReply = applyGuardrails(pronouns.reply);
+  if (!finalReply) return;
+
   const posted = await postToSlack({
     channel: event.channel,
-    text: result.reply,
+    text: finalReply,
     thread_ts: replyThreadTs,
   });
 
@@ -721,7 +762,7 @@ async function processEventInner(body, background) {
     name: 'LLM',
     type: 'llm',
     input: [{ role: 'system', content: systemPrompt }, { role: 'user', content: cleanedText }],
-    output: { content: result.reply },
+    output: { content: finalReply },
     metadata: { model: result.model, provider: 'groq' },
     startTime: llmStartedAt,
     endTime: llmFinishedAt,
@@ -741,7 +782,7 @@ async function processEventInner(body, background) {
           thread_context: threadContext || null,
         },
         output: {
-          response: result.reply,
+          response: finalReply,
           model: result.model,
           tokens: result.tokens,
           latency_ms: result.latencyMs,
@@ -755,6 +796,9 @@ async function processEventInner(body, background) {
           conversation_id: `${event.channel}:${replyThreadTs || posted.ts}`,
           intent,
           path: 'local',
+          answer_floor_applied: floor.applied,
+          answer_floor_reason: floor.reason,
+          pronoun_rewrites: pronouns.rewrites,
           environment: ENVIRONMENT,
           trace_kind: 'production_reply',
           app_version: APP_VERSION,

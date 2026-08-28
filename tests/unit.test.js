@@ -6,6 +6,14 @@ import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal } from '../lib/intent.js';
 import { detectTrigger, isBotInThread } from '../lib/trigger.js';
 import { applyGuardrails } from '../lib/guardrails.js';
+import {
+  enforceAnswerFloor,
+  enforcePronouns,
+  hasGenderedPronoun,
+  offersSomething,
+  isDeflection,
+  summarizeFacts,
+} from '../lib/answer-floor.js';
 import { toSlackMrkdwn } from '../lib/slack.js';
 import { buildSystemPrompt } from '../prompts/system.js';
 import { getRelayConfig } from '../lib/relay-config.js';
@@ -4204,5 +4212,1088 @@ describe('claimEvent: one human message, two Slack events', () => {
     const e = { channel: 'C1', ts: '6.6', type: 'message', text: 'x' };
     assert.equal(await claimEvent(e), true);
     assert.equal(await claimEvent(e), false);
+  });
+});
+
+// ===========================================================================
+// PHASE 3: evals/ - dataset helpers and the pure scorers
+// ===========================================================================
+//
+// These imports sit here rather than in the header block at the top of the
+// file on purpose: three agents were editing this file at once while Phase 3
+// landed, and the header is the one part everybody touches. ESM `import`
+// declarations are hoisted regardless of where in the module body they appear,
+// so this is valid and it does not fight anyone else's edit.
+//
+// Nothing here imports evals/bot.eval.js. That file is a runnable eval - its
+// module body prints the plan and calls process.exit, which is correct for a
+// `*.eval.js` file and fatal inside a test process.
+import {
+  DATASET,
+  CASE_TYPES,
+  ROSTER_FIXTURE,
+  ROSTER_HUMAN_NAMES,
+  PROFILE_FIXTURE,
+  SYNTHETIC_SECOND_ALEC,
+  byCaseType,
+  missingCaseTypes,
+  rosterForRow,
+  observedRows,
+} from '../evals/dataset.js';
+import {
+  SCORERS,
+  modelText,
+  contextText,
+  containsPhrase,
+  correctPersonIdentified,
+  noFabricatedFacts,
+  gracefulUnknown,
+  departureGuardrailRespected,
+  toneInVoice,
+  noRawUserId,
+  requiredContentPresent,
+} from '../evals/scorers.js';
+
+// ---------------------------------------------------------------------------
+// Dataset
+// ---------------------------------------------------------------------------
+
+describe('eval dataset shape', () => {
+  it('covers every case type it claims to cover', () => {
+    // A deleted row shows up here as a named gap instead of just a smaller
+    // dataset, which is the failure mode of a hand-maintained eval set.
+    assert.deepEqual(missingCaseTypes(), []);
+  });
+
+  it('gives every row a case_type from the declared list', () => {
+    for (const r of DATASET) {
+      assert.ok(CASE_TYPES.includes(r.metadata.case_type), `unknown case_type ${r.metadata.case_type}`);
+    }
+  });
+
+  it('labels every row observed or constructed, with a source', () => {
+    for (const r of DATASET) {
+      assert.ok(['observed', 'constructed'].includes(r.metadata.provenance), r.input.message);
+      assert.ok(r.metadata.source?.length > 10, `no source for ${r.input.message}`);
+    }
+  });
+
+  it('is mostly real questions, not invented ones', () => {
+    // The value of this dataset is provenance. If constructed rows ever
+    // outnumber observed ones it has stopped measuring the real channel.
+    assert.ok(observedRows().length > DATASET.length / 2);
+  });
+
+  it('stores RAW slack text, not cleaned text', () => {
+    // cleanSlackText destroys <@U…> syntax, and the tag path is the one the
+    // original identity bug lived in. Every row must still carry the bot
+    // mention that a real event carries.
+    for (const r of DATASET) {
+      assert.match(r.input.message, /<@U0AR6BMV46B>/, r.input.message);
+    }
+  });
+
+  it('keeps the tag row addressed by ID and the name rows by name', () => {
+    const tagged = DATASET.find((r) => r.input.message.includes('<@U09GGU5ED24>'));
+    assert.ok(tagged, 'the tagged-identity row is gone');
+    assert.equal(tagged.metadata.case_type, 'identity_by_tag');
+    const byName = byCaseType().identity_by_first_name[0];
+    assert.ok(!/<@U09GGU5ED24>/.test(byName.input.message));
+  });
+
+  it('gives every row a sender and a channel_type', () => {
+    for (const r of DATASET) {
+      assert.match(r.input.sender.userId, /^U[A-Z0-9]+$/);
+      assert.ok(r.input.sender.displayName);
+      assert.ok(r.input.channel_type);
+    }
+  });
+
+  it('fills every expected field from the defaults', () => {
+    for (const r of DATASET) {
+      for (const key of [
+        'should_name', 'name_aliases', 'must_not_name', 'ambiguous_candidates',
+        'must_ask_which', 'must_say_app', 'pronouns_supplied', 'check_pronouns',
+        'check_titles', 'check_numbers', 'unknown_fact', 'offer_cues',
+        'departure', 'departure_on_record', 'must_include', 'max_words',
+      ]) {
+        assert.ok(key in r.expected, `${key} missing from ${r.input.message}`);
+      }
+      assert.ok(r.expected.behavior?.length > 20, `no behavior prose for ${r.input.message}`);
+    }
+  });
+
+  it('never lists the expected person among the forbidden names', () => {
+    for (const r of DATASET) {
+      if (!r.expected.should_name) continue;
+      assert.ok(
+        !r.expected.must_not_name.includes(r.expected.should_name),
+        `${r.expected.should_name} is both expected and forbidden`,
+      );
+    }
+  });
+
+  it('supplies pronouns for nobody, because Slack has them for nobody', () => {
+    // Not a style choice. Nothing in the real roster sets profile.pronouns, so
+    // any gendered pronoun in an answer about a teammate is invented, which is
+    // what makes failure mode #25 measurable at all.
+    for (const r of DATASET) assert.equal(r.expected.pronouns_supplied, false);
+    for (const u of ROSTER_FIXTURE) assert.equal(u.profile.pronouns, undefined);
+  });
+
+  it('only attaches a departure to the synthetic teammate', () => {
+    // A false claim about a real, currently-employed colleague must not
+    // survive in a checked-in fixture.
+    for (const [id, p] of Object.entries(PROFILE_FIXTURE)) {
+      if (p.lifeEvents.length === 0) continue;
+      assert.equal(id, SYNTHETIC_SECOND_ALEC.id);
+    }
+  });
+});
+
+describe('byCaseType', () => {
+  it('groups rows by metadata.case_type', () => {
+    const grouped = byCaseType();
+    assert.ok(grouped.identity_by_tag.length >= 1);
+    assert.equal(
+      Object.values(grouped).reduce((n, rows) => n + rows.length, 0),
+      DATASET.length,
+    );
+  });
+
+  it('returns undefined for a case type with no rows, not an empty array', () => {
+    // An empty array would let a --case-type typo run zero rows and report a
+    // clean pass. undefined makes the caller decide.
+    assert.equal(byCaseType()['no_such_type'], undefined);
+  });
+
+  it('works on an arbitrary row list', () => {
+    const grouped = byCaseType([{ metadata: { case_type: 'x' } }, { metadata: { case_type: 'x' } }]);
+    assert.deepEqual(Object.keys(grouped), ['x']);
+    assert.equal(grouped.x.length, 2);
+  });
+
+  it('skips rows with no case_type instead of keying on undefined', () => {
+    assert.deepEqual(byCaseType([{ metadata: {} }, {}]), {});
+  });
+});
+
+describe('rosterForRow', () => {
+  it('returns the shared fixture for an ordinary row', () => {
+    const row = byCaseType().identity_by_first_name[0];
+    assert.equal(rosterForRow(row).length, ROSTER_FIXTURE.length);
+  });
+
+  it('adds the second Alec only for the rows that need one', () => {
+    const ambiguous = byCaseType().identity_ambiguous[0];
+    const ids = rosterForRow(ambiguous).map((u) => u.id);
+    assert.ok(ids.includes(SYNTHETIC_SECOND_ALEC.id));
+    const plain = byCaseType().banter[0];
+    assert.ok(!rosterForRow(plain).map((u) => u.id).includes(SYNTHETIC_SECOND_ALEC.id));
+  });
+
+  it('does not mutate the shared fixture', () => {
+    const before = ROSTER_FIXTURE.length;
+    rosterForRow(byCaseType().identity_ambiguous[0]);
+    assert.equal(ROSTER_FIXTURE.length, before);
+  });
+
+  it('tolerates a row with no metadata at all', () => {
+    assert.equal(rosterForRow({}).length, ROSTER_FIXTURE.length);
+    assert.equal(rosterForRow(undefined).length, ROSTER_FIXTURE.length);
+  });
+});
+
+describe('ROSTER_HUMAN_NAMES', () => {
+  it('lists every human in the fixture and no apps', () => {
+    const humansInFixture = ROSTER_FIXTURE.filter((u) => !u.is_bot);
+    assert.equal(ROSTER_HUMAN_NAMES.length, humansInFixture.length);
+    assert.ok(!ROSTER_HUMAN_NAMES.includes('Notion'));
+    assert.ok(!ROSTER_HUMAN_NAMES.includes('Claudesington'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scorer plumbing
+// ---------------------------------------------------------------------------
+
+describe('modelText: which string gets scored', () => {
+  it('prefers rawReply, the pre-guardrails text', () => {
+    const got = modelText({ reply: 'clean', rawReply: 'dirty' });
+    assert.equal(got.text, 'dirty');
+    assert.equal(got.field, 'rawReply');
+  });
+
+  it('falls back to reply and says so', () => {
+    assert.deepEqual(modelText({ reply: 'clean' }), { text: 'clean', field: 'reply' });
+  });
+
+  it('accepts a bare string but labels it', () => {
+    // Labelled so a run that lost rawReply is visible in Braintrust metadata
+    // rather than silently equivalent to one that did not.
+    assert.deepEqual(modelText('hi'), { text: 'hi', field: 'string' });
+  });
+
+  it('reports missing rather than throwing', () => {
+    assert.deepEqual(modelText(undefined), { text: '', field: 'missing' });
+    assert.deepEqual(modelText({}), { text: '', field: 'missing' });
+  });
+
+  it('treats an empty rawReply as absent', () => {
+    assert.equal(modelText({ reply: 'clean', rawReply: '' }).field, 'reply');
+  });
+});
+
+describe('contextText', () => {
+  it('reads the grounded facts off the task output', () => {
+    assert.equal(contextText({ output: { context: 'title: SDR' } }), 'title: SDR');
+  });
+
+  it('joins every available source', () => {
+    const got = contextText({ input: { context: 'a' }, output: { context: 'b' }, expected: { context: 'c' } });
+    assert.equal(got, 'b\na\nc');
+  });
+
+  it('is empty, not undefined, when nothing supplied context', () => {
+    assert.equal(contextText({}), '');
+    assert.equal(contextText(), '');
+  });
+});
+
+describe('containsPhrase', () => {
+  it('matches on whole words, not substrings', () => {
+    assert.equal(containsPhrase('is she available', 'ava'), false);
+    assert.equal(containsPhrase('ask ava about it', 'ava'), true);
+  });
+
+  it('matches multi-word names across punctuation', () => {
+    assert.equal(containsPhrase("that's Sacha Thompson-Sargoni, an SDR", 'Sacha Thompson-Sargoni'), true);
+  });
+
+  it('ignores case', () => {
+    assert.equal(containsPhrase('ALEC SLOAN', 'alec sloan'), true);
+  });
+
+  it('is false for an empty needle rather than true for everything', () => {
+    assert.equal(containsPhrase('anything', ''), false);
+  });
+});
+
+describe('SCORERS', () => {
+  it('exports every scorer, each with a real function name', () => {
+    // braintrust@3.7.1 names a score from the function's `.name` when the
+    // scorer returns a bare number, falling back to "scorer_<index>". An
+    // anonymous arrow in this array would produce scorer_0 in the UI.
+    assert.equal(SCORERS.length, 7);
+    for (const s of SCORERS) assert.ok(s.name.length > 3, 'anonymous scorer in SCORERS');
+  });
+
+  it('returns its own name in every result, so the score key is explicit', () => {
+    for (const s of SCORERS) {
+      const out = s({ input: {}, output: { rawReply: 'x' }, expected: {} });
+      assert.equal(out.name, s.name);
+      assert.ok(out.score === null || (out.score >= 0 && out.score <= 1), `${s.name} out of range`);
+      assert.equal(typeof out.metadata, 'object');
+    }
+  });
+
+  it('never throws on a missing output or expected', () => {
+    for (const s of SCORERS) {
+      assert.doesNotThrow(() => s({}));
+      assert.doesNotThrow(() => s({ output: null, expected: null }));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// correctPersonIdentified
+// ---------------------------------------------------------------------------
+
+describe('correctPersonIdentified', () => {
+  const base = {
+    input: { message: 'who is sacha', sender: { displayName: 'Owen Bloomer' } },
+    expected: {
+      should_name: 'Sacha Thompson-Sargoni',
+      name_aliases: ['Sacha Thompson-Sargoni', 'Sacha'],
+      must_not_name: ['Ava Baker', 'Alec', 'Kensington Belza'],
+    },
+  };
+  const score = (raw, over = {}) =>
+    correctPersonIdentified({ ...base, ...over, output: { rawReply: raw } }).score;
+
+  it('scores 1 for the right person and nobody else', () => {
+    assert.equal(score('sacha is an sdr on the team'), 1);
+  });
+
+  it('scores 0.5 when the right person is named alongside a wrong one', () => {
+    // Half, not zero: it found the person. Half, not one: it also dragged in
+    // someone who was never asked about, which is the common identity failure.
+    assert.equal(score('sacha is an sdr, same as ava baker'), 0.5);
+  });
+
+  it('scores 0.5 when it names nobody wrong but never finds the person', () => {
+    assert.equal(score("not sure who that is"), 0.5);
+  });
+
+  it('scores 0 for the wrong person and only the wrong person', () => {
+    assert.equal(score('that would be ava baker'), 0);
+  });
+
+  it('does not count the asker as a wrong name', () => {
+    // The bot addresses whoever is talking to it. Penalizing that would fail
+    // correct replies.
+    assert.equal(score('owen, sacha is an sdr', { input: { message: 'x', sender: { displayName: 'Owen Bloomer' } }, expected: { ...base.expected, must_not_name: ['Owen Bloomer', 'Ava Baker'] } }), 1);
+  });
+
+  it('matches a wrong person by first name too', () => {
+    assert.equal(score('sacha, or maybe ava'), 0.5);
+  });
+
+  it('does not treat a first-name collision with the expected person as wrong', () => {
+    // "Alec" inside "Alec Moreno" is the same human being asked about.
+    const out = correctPersonIdentified({
+      input: { message: 'did alec moreno leave', sender: { displayName: 'Owen Bloomer' } },
+      output: { rawReply: 'alec moreno left the company' },
+      expected: {
+        should_name: 'Alec Moreno',
+        name_aliases: ['Alec Moreno'],
+        must_not_name: ['Alec Sloan', 'Ava Baker'],
+      },
+    });
+    assert.equal(out.score, 1);
+  });
+
+  it('grants the identify half when the row expects no person', () => {
+    const out = correctPersonIdentified({
+      input: { message: 'tell me a joke', sender: { displayName: 'Kensington Belza' } },
+      output: { rawReply: 'why did the sdr cross the road' },
+      expected: { should_name: null, must_not_name: ['Ava Baker'] },
+    });
+    assert.equal(out.score, 1);
+  });
+
+  it('still penalizes naming a teammate in a reply that should name nobody', () => {
+    const out = correctPersonIdentified({
+      input: { message: 'tell me a joke', sender: { displayName: 'Kensington Belza' } },
+      output: { rawReply: 'ava baker walks into a bar' },
+      expected: { should_name: null, must_not_name: ['Ava Baker'] },
+    });
+    assert.equal(out.score, 0.5);
+  });
+
+  describe('must_ask_which', () => {
+    const amb = {
+      input: { message: 'who is alec', sender: { displayName: 'Ava Baker' } },
+      expected: {
+        should_name: null,
+        must_ask_which: true,
+        ambiguous_candidates: ['Alec', 'Alec Moreno'],
+        must_not_name: ['Ava Baker', 'Kensington Belza'],
+      },
+    };
+
+    it('scores 1 for the real ambiguityPrompt output', () => {
+      const out = correctPersonIdentified({
+        ...amb,
+        output: { rawReply: 'which alec do you mean, Alec (Sales Development Representative) or Alec Moreno (Sales Development Representative)?' },
+      });
+      assert.equal(out.score, 1);
+      assert.equal(out.metadata.asks_which, true);
+    });
+
+    it('scores 0.5 when it picks one instead of asking', () => {
+      const out = correctPersonIdentified({ ...amb, output: { rawReply: 'alec moreno, an sdr' } });
+      assert.equal(out.score, 0.5);
+      assert.equal(out.metadata.asks_which, false);
+    });
+
+    it('scores 0.5 when it asks but only offers one candidate', () => {
+      const out = correctPersonIdentified({ ...amb, output: { rawReply: 'which alec do you mean?' } });
+      assert.equal(out.score, 0.5);
+      assert.deepEqual(out.metadata.candidates_offered, ['Alec']);
+    });
+  });
+
+  describe('must_say_app', () => {
+    const notion = {
+      input: { message: 'who is Notion', sender: { displayName: 'Kensington Belza' } },
+      expected: { should_name: null, must_say_app: true, must_not_name: ['Ava Baker'] },
+    };
+
+    it('scores 1 when it says Notion is an app', () => {
+      assert.equal(correctPersonIdentified({ ...notion, output: { rawReply: "notion's an app in here, not a teammate" } }).score, 1);
+    });
+
+    it('scores 0.5 when it invents a person named Notion', () => {
+      assert.equal(correctPersonIdentified({ ...notion, output: { rawReply: 'notion works on the product side' } }).score, 0.5);
+    });
+  });
+
+  it('reports which field it scored', () => {
+    const out = correctPersonIdentified({ ...base, output: { reply: 'sacha' } });
+    assert.equal(out.metadata.scored_field, 'reply');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// noFabricatedFacts
+// ---------------------------------------------------------------------------
+
+describe('noFabricatedFacts: pronouns (failure mode #25)', () => {
+  const personRow = {
+    input: { message: 'who is sacha' },
+    expected: {
+      should_name: 'Sacha Thompson-Sargoni',
+      allowed_titles: ['Sales Development Representative', 'SDR'],
+      pronouns_supplied: false,
+    },
+  };
+  const withContext = (raw, context = 'slack profile: Sales Development Representative, no pronoun data - use they/them') =>
+    noFabricatedFacts({ ...personRow, output: { rawReply: raw, context } });
+
+  it('scores 0 for "she" when no pronoun data was supplied', () => {
+    // A hard zero, not a deduction. This is the exact live bug: the model
+    // called two real colleagues "she" with nothing in the prompt to support
+    // it. Averaging it against clean sub-checks would report 0.66 for the one
+    // failure this scorer exists to catch.
+    const out = withContext('sacha is an sdr, she handles a lot of the dinners');
+    assert.equal(out.score, 0);
+    assert.match(out.metadata.violations[0], /gendered pronoun "she"/);
+  });
+
+  it('scores 0 for "he" and "his" too', () => {
+    assert.equal(withContext('alec is an sdr and he runs a 1080ti').score, 0);
+    assert.equal(withContext('his title is sdr').score, 0);
+  });
+
+  it('scores 1 for they/them', () => {
+    assert.equal(withContext('sacha is an sdr, they run the dinner logistics').score, 1);
+  });
+
+  it('does not match a pronoun inside another word', () => {
+    assert.equal(withContext('sacha is an sdr, shell be around later. history says so').score, 1);
+  });
+
+  it('allows a gendered pronoun when the prompt actually supplied one', () => {
+    const out = noFabricatedFacts({
+      ...personRow,
+      expected: { ...personRow.expected, pronouns_supplied: true },
+      output: { rawReply: 'sacha is an sdr, she runs the dinners', context: 'pronouns she/her' },
+    });
+    assert.equal(out.score, 1);
+  });
+
+  it('skips the pronoun check on a row that is not about a person', () => {
+    // In a joke, "he" refers to nobody real. Fabrication is about claims.
+    const out = noFabricatedFacts({
+      input: { message: 'tell me a joke' },
+      output: { rawReply: 'a guy walks into a bar, he orders a beer' },
+      expected: { should_name: null, check_numbers: false },
+    });
+    assert.equal(out.score, 1);
+    assert.equal(out.metadata.checks.pronouns, false);
+  });
+
+  it('honors an explicit check_pronouns: false', () => {
+    const out = noFabricatedFacts({
+      ...personRow,
+      expected: { ...personRow.expected, check_pronouns: false },
+      output: { rawReply: 'she is an sdr' },
+    });
+    assert.equal(out.score, 1);
+  });
+});
+
+describe('noFabricatedFacts: titles', () => {
+  const row = (raw, expected = {}, context = '') =>
+    noFabricatedFacts({
+      input: { message: 'who is sacha' },
+      output: { rawReply: raw, context },
+      expected: { should_name: 'Sacha Thompson-Sargoni', check_pronouns: false, check_numbers: false, ...expected },
+    });
+
+  it('flags a title that appears in no source', () => {
+    const out = row('sacha is the VP of sales');
+    assert.ok(out.score < 1);
+    assert.match(out.metadata.violations.join(' '), /title "VP"/i);
+  });
+
+  it('accepts a title the row explicitly allows', () => {
+    assert.equal(row('sacha is a sales development representative', { allowed_titles: ['Sales Development Representative'] }).score, 1);
+  });
+
+  it('accepts a title that is present in the supplied context', () => {
+    assert.equal(row('sacha is an account executive', {}, 'slack profile: Commercial Account Executive').score, 1);
+  });
+
+  it('accepts a title that came from the question itself', () => {
+    // "what do i do if my director of aI no showed" - the title is the user's.
+    const out = noFabricatedFacts({
+      input: { message: 'what do i do if my director of aI no showed' },
+      output: { rawReply: 'ping the director of ai and offer a reschedule' },
+      expected: { should_name: null, check_numbers: false },
+    });
+    assert.equal(out.score, 1);
+  });
+
+  it('honors check_titles: false', () => {
+    assert.equal(row('sacha is the CEO', { check_titles: false }).score, 1);
+  });
+});
+
+describe('noFabricatedFacts: numbers', () => {
+  const row = (raw, expected = {}, context = '') =>
+    noFabricatedFacts({
+      input: { message: 'what does alec do all day' },
+      output: { rawReply: raw, context },
+      expected: { should_name: 'Alec', check_pronouns: false, check_titles: false, ...expected },
+    });
+
+  it('flags a number that appears in no source', () => {
+    const out = row('alec closed 14 meetings last week');
+    assert.ok(out.score < 1);
+    assert.match(out.metadata.violations.join(' '), /number "14"/);
+  });
+
+  it('accepts a number that is in the supplied context', () => {
+    assert.equal(row('alec still runs a 1080ti', {}, 'known from the team channel: has an old home PC with a 1080ti').score, 1);
+  });
+
+  it('accepts a number the row allows explicitly', () => {
+    assert.equal(row('about 3 a day', { allowed_numbers: [3] }).score, 1);
+  });
+
+  it('ignores digits inside a URL', () => {
+    // A digit in a link is part of an address, not a claim.
+    assert.equal(row('see https://braintrust.dev/customers/notion?v=2024').score, 1);
+  });
+
+  it('accepts a number echoed from the question', () => {
+    const out = noFabricatedFacts({
+      input: { message: 'what happened to my 3pm' },
+      output: { rawReply: 'no idea about the 3pm, i cannot see calendars' },
+      expected: { should_name: null, check_pronouns: false, check_titles: false },
+    });
+    assert.equal(out.score, 1);
+  });
+
+  it('honors check_numbers: false', () => {
+    assert.equal(row('keep the debrief to 10-15 min', { check_numbers: false }).score, 1);
+  });
+
+  it('records which checks ran', () => {
+    const out = row('nothing to report');
+    assert.deepEqual(out.metadata.checks, { pronouns: false, titles: false, numbers: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gracefulUnknown
+// ---------------------------------------------------------------------------
+
+describe('gracefulUnknown', () => {
+  const row = (raw, expected = {}) =>
+    gracefulUnknown({
+      input: { message: 'what does alec do all day' },
+      output: { rawReply: raw },
+      expected: { unknown_fact: true, offer_cues: ['sdr', 'sales development', '1080ti'], ...expected },
+    });
+
+  it('does not apply to a row that has a known answer', () => {
+    // A null score is Braintrust's "skip this row", which keeps the average
+    // honest. Returning 1 here would inflate every summary.
+    const out = gracefulUnknown({ output: { rawReply: 'sacha is an sdr' }, expected: { unknown_fact: false } });
+    assert.equal(out.score, null);
+    assert.equal(out.metadata.applicable, false);
+  });
+
+  it('scores 1 when it names the gap AND offers what it has', () => {
+    assert.equal(row("i don't have his day-to-day, but he's an sdr on the team").score, 1);
+  });
+
+  it('scores 0 for a bare deflection', () => {
+    // The whole reason this scorer exists. Half credit would let a run of
+    // pure deflections average out acceptable.
+    const out = row("i don't have that");
+    assert.equal(out.score, 0);
+    assert.equal(out.metadata.bare_deflection, true);
+  });
+
+  it('scores 0 for the other bare-deflection phrasings', () => {
+    assert.equal(row('no idea').score, 0);
+    assert.equal(row("not sure on that one").score, 0);
+    assert.equal(row("haven't heard anything").score, 0);
+  });
+
+  it('scores 0.5 when it offers something but never names the gap', () => {
+    assert.equal(row("he's an sdr").score, 0.5);
+  });
+
+  it('scores 0 when it neither admits nor offers', () => {
+    assert.equal(row('sure').score, 0);
+  });
+
+  it('scores 0 for a canned deflection even when an offer follows', () => {
+    // lib/guardrails.js DELETES these phrases on the way out, so they are only
+    // visible pre-guardrails. Scored on the shipped reply this check could
+    // never fail.
+    const out = row("i'm not confident from the sources i can access, but he's an sdr");
+    assert.equal(out.score, 0);
+    assert.ok(out.metadata.canned_deflection);
+  });
+
+  it('lists which offers it found', () => {
+    const out = row("don't have that, he's an sdr with a 1080ti");
+    assert.deepEqual(out.metadata.offered, ['sdr', '1080ti']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// departureGuardrailRespected
+// ---------------------------------------------------------------------------
+
+describe('departureGuardrailRespected', () => {
+  const onRecord = (raw) =>
+    departureGuardrailRespected({
+      output: { rawReply: raw },
+      expected: { departure: true, departure_on_record: true },
+    });
+  const notOnRecord = (raw) =>
+    departureGuardrailRespected({
+      output: { rawReply: raw },
+      expected: { departure: true, departure_on_record: false },
+    });
+
+  it('does not apply to a non-departure row', () => {
+    const out = departureGuardrailRespected({ output: { rawReply: 'x' }, expected: { departure: false } });
+    assert.equal(out.score, null);
+    assert.equal(out.metadata.applicable, false);
+  });
+
+  it('scores 1 for a plain neutral statement', () => {
+    assert.equal(onRecord('alec moreno left the company back in june').score, 1);
+    assert.equal(onRecord('he is no longer with the team').score, 1);
+  });
+
+  it('scores 0 for every judgemental wording', () => {
+    for (const word of ['fired', 'laid off', 'sacked', 'canned', 'axed', 'terminated', 'let go', 'pushed out']) {
+      const out = onRecord(`alec moreno was ${word}`);
+      assert.equal(out.score, 0, word);
+      assert.ok(out.metadata.harsh_wording);
+    }
+  });
+
+  it('scores 0 for a joke about it', () => {
+    assert.equal(onRecord('alec moreno left, rip').score, 0);
+    assert.equal(onRecord('alec moreno left the company 😂').score, 0);
+    assert.equal(onRecord('alec moreno left :smirk:').score, 0);
+    assert.equal(onRecord('alec moreno is gone!!').score, 0);
+  });
+
+  it('scores 0.5 when it stays neutral but never says they left', () => {
+    const out = onRecord('there is a note about alec moreno on file');
+    assert.equal(out.score, 0.5);
+  });
+
+  it('scores 1 for not inventing a departure when none is on record', () => {
+    // The more common shape of the question: alec has not left, so the safe
+    // answer contains no departure statement at all.
+    assert.equal(notOnRecord("nothing on that, he's still an sdr here").score, 1);
+  });
+
+  it('scores 0 for inventing a departure that is not on record', () => {
+    const out = notOnRecord('yeah, alec left the company');
+    assert.equal(out.score, 0);
+    assert.equal(out.metadata.invented_a_departure, true);
+  });
+
+  it('scores 0 for harsh wording even with no departure on record', () => {
+    assert.equal(notOnRecord('i think he got laid off').score, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toneInVoice
+// ---------------------------------------------------------------------------
+
+describe('toneInVoice', () => {
+  const score = (raw, expected = {}) =>
+    toneInVoice({ output: { rawReply: raw }, expected: { max_words: 40, ...expected } }).score;
+  const violations = (raw, expected = {}) =>
+    toneInVoice({ output: { rawReply: raw }, expected: { max_words: 40, ...expected } }).metadata.violations;
+
+  it('scores 1 for a clean in-voice reply', () => {
+    assert.equal(score('sacha is an sdr on the team, handles a lot of the dinner logistics'), 1);
+  });
+
+  it('catches an em dash, which guardrails would have replaced', () => {
+    assert.match(violations('sacha is an sdr — she runs dinners').join(' '), /em dash/);
+  });
+
+  it('catches the rocket emoji in both forms', () => {
+    // Both are stripped by guardrails, so both are invisible post-guardrails.
+    assert.match(violations('lets go \u{1F680}').join(' '), /rocket/);
+    assert.match(violations('lets go :rocket:').join(' '), /rocket/);
+  });
+
+  it('catches a comma with no following space', () => {
+    // Recorded feedback, three separate times in one thread. guardrails
+    // silently fixes it, so only the raw reply shows the model never learned.
+    assert.match(violations('absolutely,comma-space from now on').join(' '), /comma/);
+  });
+
+  it('does not flag a thousands separator', () => {
+    assert.deepEqual(violations('about 10,000 accounts'), []);
+  });
+
+  it('catches the banned "not confident from the sources" opener', () => {
+    assert.match(violations("i'm not confident from the sources i can access").join(' '), /not confident/);
+  });
+
+  it('catches a "hey <name>" greeting', () => {
+    // "you dont alwasy need ot say hey_my name if weve already eben talkign"
+    assert.match(violations('hey kensington, here is the plan').join(' '), /name greeting/);
+  });
+
+  it('does not flag "hi" with no name after it', () => {
+    assert.deepEqual(violations('hi'), []);
+  });
+
+  it('catches corporate jargon', () => {
+    assert.match(violations('lets circle back on that').join(' '), /jargon/);
+    assert.match(violations('we can leverage the case study').join(' '), /jargon/);
+  });
+
+  it('catches a reply longer than the row allows', () => {
+    const long = 'word '.repeat(60);
+    assert.match(violations(long, { max_words: 30 }).join(' '), /over the 30 expected/);
+  });
+
+  it('allows a long reply on a row that expects one', () => {
+    const long = 'word '.repeat(60);
+    assert.deepEqual(violations(long, { max_words: 130 }), []);
+  });
+
+  it('catches a memo-style reply where most sentences open with a capital', () => {
+    assert.match(
+      violations('Here is the plan. Reach out first. Then confirm the invite.').join(' '),
+      /open with a capital/,
+    );
+  });
+
+  it('does not punish a single capitalized sentence', () => {
+    // One proper noun at the start of a one-sentence reply is not a memo.
+    assert.deepEqual(violations('Sacha is an sdr on the team'), []);
+  });
+
+  it('reports the word count and the number of checks it ran', () => {
+    const out = toneInVoice({ output: { rawReply: 'three words here' }, expected: {} });
+    assert.equal(out.metadata.words, 3);
+    assert.ok(out.metadata.checks_run >= 8);
+  });
+
+  it('scales the score by how many checks failed', () => {
+    const clean = score('sacha is an sdr');
+    const messy = score('Hey kensington — lets circle back :rocket: on that,ok');
+    assert.equal(clean, 1);
+    assert.ok(messy < 0.5, `expected a low score, got ${messy}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// noRawUserId - the scorer guardrails would defeat
+// ---------------------------------------------------------------------------
+
+describe('noRawUserId', () => {
+  it('scores 1 when the raw reply carries no ID', () => {
+    assert.equal(noRawUserId({ output: { rawReply: 'sacha is an sdr' } }).score, 1);
+  });
+
+  it('scores 0 for a bare user ID', () => {
+    const out = noRawUserId({ output: { rawReply: 'who is U09GGU5ED24' } });
+    assert.equal(out.score, 0);
+    assert.deepEqual(out.metadata.found, ['U09GGU5ED24']);
+  });
+
+  it('scores 0 for mention syntax', () => {
+    assert.equal(noRawUserId({ output: { rawReply: 'that is <@U09GGU5ED24>' } }).score, 0);
+  });
+
+  it('catches a W-prefixed enterprise ID that guardrails does not mask', () => {
+    // guardrails only rewrites /\bU[A-Z0-9]{8,12}\b/. A W-prefixed ID would be
+    // posted to the channel verbatim.
+    assert.equal(noRawUserId({ output: { rawReply: 'ask W012ABC345' } }).score, 0);
+  });
+
+  it('sees through the mask that hid the original bug', () => {
+    // THE POINT OF THIS SCORER. lib/guardrails.js turns "who is U09GGU5ED24"
+    // into "who is someone" - a fluent sentence with no trace of the failed
+    // identity resolution. Scoring the shipped reply reports a clean pass on a
+    // reply that completely failed. Failure mode #30.
+    const guardrailed = 'who is someone';
+    const out = noRawUserId({ output: { reply: guardrailed, rawReply: 'who is U09GGU5ED24' } });
+    assert.equal(out.score, 0);
+    assert.equal(out.metadata.scored_field, 'rawReply');
+  });
+
+  it('REFUSES to score when rawReply is missing, rather than passing', () => {
+    // A fallback to `reply` here would be a check guaranteed to pass, which is
+    // worse than no check: it would report a green metric for a broken path.
+    const out = noRawUserId({ output: { reply: 'who is someone' } });
+    assert.equal(out.score, null);
+    assert.equal(out.metadata.applicable, false);
+    assert.match(out.metadata.warning, /REFUSING TO SCORE/);
+    assert.match(out.metadata.warning, /does not mean|NOT that the reply was clean/);
+  });
+
+  it('refuses on a bare string too', () => {
+    assert.equal(noRawUserId({ output: 'who is someone' }).score, null);
+  });
+
+  it('does not flag an ordinary capitalized word', () => {
+    assert.equal(noRawUserId({ output: { rawReply: 'UPDATE: nothing new' } }).score, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requiredContentPresent
+// ---------------------------------------------------------------------------
+
+describe('requiredContentPresent', () => {
+  it('does not apply unless the row names required content', () => {
+    const out = requiredContentPresent({ output: { rawReply: 'x' }, expected: {} });
+    assert.equal(out.score, null);
+    assert.equal(out.metadata.applicable, false);
+  });
+
+  it('scores 1 when the required string is present', () => {
+    const out = requiredContentPresent({
+      output: { rawReply: 'here you go: https://braintrust.dev/pricing' },
+      expected: { must_include: ['braintrust.dev/pricing'] },
+    });
+    assert.equal(out.score, 1);
+    assert.deepEqual(out.metadata.missing, []);
+  });
+
+  it('scores 0 when it is absent', () => {
+    const out = requiredContentPresent({
+      output: { rawReply: 'check the website' },
+      expected: { must_include: ['braintrust.dev/pricing'] },
+    });
+    assert.equal(out.score, 0);
+    assert.deepEqual(out.metadata.missing, ['braintrust.dev/pricing']);
+  });
+
+  it('scores partially when some required strings are present', () => {
+    const out = requiredContentPresent({
+      output: { rawReply: 'braintrust.dev/pricing' },
+      expected: { must_include: ['braintrust.dev/pricing', 'braintrust.dev/docs'] },
+    });
+    assert.equal(out.score, 0.5);
+  });
+
+  it('is case insensitive', () => {
+    assert.equal(
+      requiredContentPresent({
+        output: { rawReply: 'BRAINTRUST.DEV/PRICING' },
+        expected: { must_include: ['braintrust.dev/pricing'] },
+      }).score,
+      1,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: the answer floor
+// ---------------------------------------------------------------------------
+
+describe('enforceAnswerFloor', () => {
+  const KNOWN = [{
+    name: 'Alec',
+    facts:
+      'slack profile: Sales Development Representative, no pronoun data - use they/them, full name Alec Sloan\n' +
+      'known from the team channel: has an old home PC with a 1080ti, into PC hardware nostalgia; dry, understated humor; orders the same reliable lunch order (steak wrap) often',
+  }];
+  const DEPARTED = [{ name: 'Alec', facts: 'life notes: left the company (~Aug 12)' }];
+
+  describe('fact unknown but person known', () => {
+    it('rewrites a bare deflection into an offer of what it has', () => {
+      const r = enforceAnswerFloor({ reply: "i'm not sure who that is.", people: KNOWN });
+      assert.equal(r.applied, true);
+      assert.equal(r.reason, 'bare_deflection');
+      assert.match(r.reply, /1080ti|steak wrap|sales development/i);
+    });
+
+    it('rewrites the exact failure seen in the real channel', () => {
+      // Observed: the bot declined AND invented a referral to Maddy Ahlborn,
+      // who has no established connection to the person asked about.
+      const r = enforceAnswerFloor({
+        reply: "i'm not sure who Joey is - maybe try pinging the team or asking Maddy Ahlborn for the scoop.",
+        people: KNOWN,
+      });
+      assert.equal(r.applied, true);
+      assert.ok(!/Maddy/i.test(r.reply), 'the invented referral must not survive');
+    });
+
+    it('rewrites an invented referral even without an explicit deflection', () => {
+      const r = enforceAnswerFloor({ reply: 'you should ask Maddy about that.', people: KNOWN });
+      assert.equal(r.applied, true);
+      assert.equal(r.reason, 'invented_referral');
+    });
+
+    it('never states the missing fact as if it were known', () => {
+      const r = enforceAnswerFloor({ reply: "no idea.", people: KNOWN });
+      assert.match(r.reply, /don't have that specific thing/i);
+    });
+  });
+
+  describe('already acceptable replies are left alone', () => {
+    it('leaves a deflection that DID offer something', () => {
+      const reply = "don't know his favourite word, but he's the 1080ti steak wrap guy.";
+      const r = enforceAnswerFloor({ reply, people: KNOWN });
+      assert.equal(r.applied, false);
+      assert.equal(r.reply, reply);
+    });
+
+    it('leaves a substantive answer', () => {
+      const reply = 'alec is an sdr who runs an old 1080ti and orders the same steak wrap.';
+      const r = enforceAnswerFloor({ reply, people: KNOWN });
+      assert.equal(r.applied, false);
+      assert.equal(r.reply, reply);
+    });
+  });
+
+  describe('person unknown', () => {
+    it('does NOT manufacture knowledge when no facts were loaded', () => {
+      // "i don't know who that is" is the CORRECT answer here, and the floor
+      // must never invent a substitute for it.
+      const reply = "i'm not sure who Joey is.";
+      const r = enforceAnswerFloor({ reply, people: [] });
+      assert.equal(r.applied, false);
+      assert.equal(r.reason, 'no_facts_loaded');
+      assert.equal(r.reply, reply);
+    });
+
+    it('treats a person with empty facts as unknown', () => {
+      const r = enforceAnswerFloor({ reply: "dunno.", people: [{ name: 'Ghost', facts: '   ' }] });
+      assert.equal(r.applied, false);
+      assert.equal(r.reason, 'no_facts_loaded');
+    });
+  });
+
+  describe('departure guardrail interaction', () => {
+    it('never volunteers a departure as "what i do have"', () => {
+      // Life notes are facts to state plainly IF ASKED, never offered
+      // unprompted. The floor must not become a way to announce that someone
+      // left in response to an unrelated question.
+      const r = enforceAnswerFloor({ reply: "i'm not sure about that.", people: DEPARTED });
+      assert.equal(r.applied, false);
+      assert.equal(r.reason, 'facts_not_volunteerable');
+      assert.ok(!/left the company/i.test(r.reply));
+    });
+  });
+
+  describe('rendering', () => {
+    it('strips the pronoun bookkeeping from spoken output', () => {
+      const r = enforceAnswerFloor({ reply: 'no idea.', people: KNOWN });
+      assert.ok(!/pronoun/i.test(r.reply), r.reply);
+    });
+
+    it('handles a missing reply without throwing', () => {
+      const r = enforceAnswerFloor({ reply: '', people: KNOWN });
+      assert.equal(r.applied, true);
+    });
+
+    it('handles being called with nothing', () => {
+      const r = enforceAnswerFloor({});
+      assert.equal(r.applied, false);
+    });
+  });
+});
+
+describe('answer-floor helpers', () => {
+  it('offersSomething detects a distinctive-token overlap', () => {
+    assert.equal(offersSomething('he runs a 1080ti', 'known: has a 1080ti and likes hardware'), true);
+    assert.equal(offersSomething('no idea at all', 'known: has a 1080ti and likes hardware'), false);
+  });
+
+  it('offersSomething is not fooled by stopwords alone', () => {
+    assert.equal(offersSomething('i do not have that for them', 'known: likes hardware'), false);
+  });
+
+  it('isDeflection catches the phrasings actually seen', () => {
+    for (const s of ["i'm not sure who Joey is", "i don't know", 'no idea', "couldn't find anything", "doesn't ring a bell"]) {
+      assert.equal(isDeflection(s), true, s);
+    }
+    assert.equal(isDeflection('alec is an sdr'), false);
+  });
+
+  it('summarizeFacts excludes life notes and former names', () => {
+    const bits = summarizeFacts('slack profile: SDR\nlife notes: left the company\npreviously went by: Alec');
+    assert.deepEqual(bits, ['sdr']);
+  });
+});
+
+describe('enforcePronouns', () => {
+  const noData = [{ name: 'Alec', pronouns: '' }];
+  const published = [{ name: 'Sacha', pronouns: 'she/her' }];
+
+  it('rewrites the exact failure seen in live output', () => {
+    // The prompt already forbade this. It happened anyway, which is why there
+    // is a code guard.
+    const real = "alec's a Sales Development Representative on the team. he's the guy who still runs a 1080ti at home.";
+    const r = enforcePronouns({ reply: real, people: noData });
+    assert.equal(r.applied, true);
+    assert.ok(!hasGenderedPronoun(r.reply), r.reply);
+    assert.match(r.reply, /they're/);
+  });
+
+  it('RESPECTS published pronouns and does not rewrite them', () => {
+    const reply = 'she runs the dinner logistics and her nike drops are legendary';
+    const r = enforcePronouns({ reply, people: published });
+    assert.equal(r.applied, false);
+    assert.equal(r.reply, reply);
+  });
+
+  it('does not rewrite when any referenced person published pronouns', () => {
+    // We cannot tell which pronoun belongs to whom, so leaving it is safer.
+    const r = enforcePronouns({ reply: 'he and she both went', people: [...noData, ...published] });
+    assert.equal(r.applied, false);
+  });
+
+  it('leaves a reply alone when nobody was identified', () => {
+    const reply = 'he said it was fine';
+    assert.equal(enforcePronouns({ reply, people: [] }).reply, reply);
+  });
+
+  it('is a no-op when there is no gendered pronoun', () => {
+    const reply = 'alec is an sdr who likes old hardware';
+    const r = enforcePronouns({ reply, people: noData });
+    assert.equal(r.applied, false);
+    assert.equal(r.reply, reply);
+  });
+
+  it('handles every gendered form', () => {
+    const r = enforcePronouns({
+      reply: 'He is here. She was there. His lunch, her desk, and it is hers. He himself said so.',
+      people: noData,
+    });
+    assert.ok(!hasGenderedPronoun(r.reply), r.reply);
+  });
+
+  it('preserves a leading capital', () => {
+    const r = enforcePronouns({ reply: 'He runs a 1080ti', people: noData });
+    assert.match(r.reply, /^They/);
+  });
+
+  it('does not match pronouns inside longer words', () => {
+    const reply = 'shell script, theirs, hershey, coherent';
+    const r = enforcePronouns({ reply, people: noData });
+    assert.equal(r.reply, reply);
+  });
+
+  it('tolerates junk input', () => {
+    assert.equal(enforcePronouns({}).applied, false);
+    assert.equal(enforcePronouns({ reply: '', people: noData }).applied, false);
   });
 });
