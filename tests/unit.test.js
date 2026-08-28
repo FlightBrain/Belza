@@ -5297,3 +5297,29 @@ describe('enforcePronouns', () => {
     assert.equal(enforcePronouns({ reply: '', people: noData }).applied, false);
   });
 });
+
+describe('regression: pronoun guard handles curly apostrophes', () => {
+  const noData = [{ name: 'Alec', pronouns: '' }];
+
+  it('rewrites the curly form to they’re, not they’s', () => {
+    // Found in a live smoke test. The model emitted "he’s" with U+2019; the
+    // contraction rule only matched a straight quote, so the bare he->they rule
+    // fired on the fragment and produced "they’s". Every fixture had been
+    // typed with straight quotes, so no unit test caught it.
+    const r = enforcePronouns({
+      reply: 'alec sloan is a sales development representative. he’s the guy with a 1080ti at home.',
+      people: noData,
+    });
+    assert.match(r.reply, /they’re|they're/);
+    assert.ok(!/they’s|they's/.test(r.reply), r.reply);
+    assert.ok(!hasGenderedPronoun(r.reply), r.reply);
+  });
+
+  it('handles straight, curly and modifier-letter apostrophes alike', () => {
+    for (const apos of ["'", '’', 'ʼ']) {
+      const r = enforcePronouns({ reply: `he${apos}s here`, people: noData });
+      assert.ok(!/they.s\b/i.test(r.reply) || /they.re/i.test(r.reply), `${apos}: ${r.reply}`);
+      assert.ok(!hasGenderedPronoun(r.reply), `${apos}: ${r.reply}`);
+    }
+  });
+});
