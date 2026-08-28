@@ -6,12 +6,12 @@ import { isDuplicate } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal, wantsMarketingEvents } from '../lib/intent.js';
 import { getCapabilities, capabilitySummary } from '../lib/capabilities.js';
-import { fetchContext, fetchMarketingEvents } from '../lib/context.js';
 import { fetchCalendarContext } from '../lib/calendar.js';
 import { buildThreadContext } from '../lib/thread-context.js';
 import { buildSystemPrompt } from '../prompts/system.js';
 import { callClaude } from '../lib/claude.js';
 import { applyGuardrails } from '../lib/guardrails.js';
+import { redactForChannel, isPublicSurface } from '../lib/source-visibility.js';
 import { executeRelay, willAttemptRelay } from '../lib/relay.js';
 import { updateJob } from '../lib/relay-store.js';
 import { handleReaction } from '../lib/feedback.js';
@@ -358,7 +358,11 @@ async function processEventInner(body, background) {
   // Only relay when the intent genuinely needs grounded Notion/Calendar data.
   // If relay returns a non-answer, it returns null and we fall through to local.
   const threadContext = await buildThreadContext(event);
-  const workSignal = hasWorkSignal(cleanedText);
+  // wantsMarketingEvents is folded into the relay signal. Before this,
+  // "what marketing events are upcoming" classified as general_qna with no
+  // work keyword, so it never relayed - it was served ONLY by the direct
+  // Notion API path, which was dead. The question got no grounded data at all.
+  const workSignal = hasWorkSignal(cleanedText) || wantsMarketingEvents(cleanedText);
 
   // The relay poll can take up to ~55s (lib/relay-config.js RELAY_TIMEOUT_MS),
   // which reads as the bot going silent/stuck in a fast-moving thread. Post a
@@ -369,8 +373,10 @@ async function processEventInner(body, background) {
   }
 
   let relayResult = null;
+  let relayAttempted = false;
   const relayStartedAt = new Date();
   if (!hasLocalPersonLookup) {
+    relayAttempted = true;
     try {
       relayResult = await executeRelay({
         event,
@@ -388,7 +394,22 @@ async function processEventInner(body, background) {
   if (relayResult) {
     if (relayResult.skipped) return;
 
-    const safeAnswer = applyGuardrails(relayResult.answer);
+    // SOURCE-VISIBILITY GATE. The relay answer comes from a Notion agent that
+    // authenticates as a person, so it can see private pages, other Slack
+    // channels and 1:1 notes that the people in THIS channel cannot. Strip or
+    // refuse anything that could only have come from a privileged source
+    // before it is spoken. See lib/source-visibility.js for what was actually
+    // observed leaking.
+    const visibility = redactForChannel(relayResult.answer, { channelId: event.channel });
+    if (visibility.redactions.length > 0) {
+      console.warn(
+        `source-visibility: redacted [${visibility.redactions.join(', ')}]` +
+          `${visibility.blocked ? ' and BLOCKED the answer' : ''}` +
+          ` channel=${event.channel} public=${isPublicSurface(event)}`,
+      );
+    }
+
+    const safeAnswer = applyGuardrails(visibility.text);
 
     const posted = await postToSlack({
       channel: event.channel,
@@ -421,6 +442,8 @@ async function processEventInner(body, background) {
             conversation_id: `${event.channel}:${replyThreadTs || posted.ts}`,
             intent,
             path: 'relay',
+            source_redactions: visibility.redactions,
+            source_blocked: visibility.blocked,
             environment: ENVIRONMENT,
             trace_kind: 'production_reply',
             app_version: APP_VERSION,
@@ -599,23 +622,20 @@ async function processEventInner(body, background) {
   // mentionedContext (facts about other teammates named in this message)
   // was already computed above, alongside the relay-skip decision.
 
-  // Only pull Notion/calendar context when the message actually calls for it —
-  // stuffing every reply with SDR Hub content and calendar lookups wastes
-  // calls and pollutes answers to unrelated questions.
+  // Notion is NOT fetched here any more. There is exactly one Notion path now
+  // and it is the relay, which already ran above - if it had an answer we
+  // returned it. Reaching this point means either the message didn't warrant a
+  // Notion lookup or the relay had nothing, and in both cases the local model
+  // must answer from what it has rather than from a second, disagreeing source.
   const wantsCalendar = intent === 'calendar_whereabouts';
-  const wantsEvents = wantsMarketingEvents(cleanedText);
   const retrievalStartedAt = new Date();
-  const [notionResult, calendarResult, marketingEventsResult] = await Promise.all([
-    workSignal ? fetchContext() : Promise.resolve(null),
+  const [calendarResult] = await Promise.all([
     wantsCalendar ? fetchCalendarContext() : Promise.resolve(null),
-    wantsEvents ? fetchMarketingEvents() : Promise.resolve(null),
   ]);
   const retrievalFinishedAt = new Date();
 
   const systemPrompt = buildSystemPrompt({
-    notionContext: notionResult?.text,
     calendarContext: calendarResult?.text,
-    marketingEventsContext: marketingEventsResult?.text,
     capabilities,
     intent,
     threadContext,
@@ -644,11 +664,7 @@ async function processEventInner(body, background) {
   // Retrieval spans — one per Notion page / calendar hit, carrying status,
   // latency, result count, and failure reason so a "[unavailable]" context
   // is a diagnosable retrieval span, not a silent gap in the final prompt.
-  const retrievalRecords = [
-    ...(notionResult?.retrieval || []),
-    ...(calendarResult?.retrieval || []),
-    ...(marketingEventsResult?.retrieval || []),
-  ];
+  const retrievalRecords = [...(calendarResult?.retrieval || [])];
   const retrievalSpans = retrievalRecords.map((r) => ({
     name: r.name,
     type: 'function',
@@ -680,9 +696,7 @@ async function processEventInner(body, background) {
         id: traceId(event.channel, posted.ts),
         input: {
           message: cleanedText,
-          notion_context: notionResult?.text || null,
           calendar_context: calendarResult?.text || null,
-          marketing_events_context: marketingEventsResult?.text || null,
           thread_context: threadContext || null,
         },
         output: {
@@ -703,9 +717,8 @@ async function processEventInner(body, background) {
           environment: ENVIRONMENT,
           trace_kind: 'production_reply',
           app_version: APP_VERSION,
-          used_notion_context: Boolean(workSignal),
           used_calendar_context: Boolean(wantsCalendar),
-          used_marketing_events_context: Boolean(wantsEvents),
+          relay_attempted: Boolean(relayAttempted),
         },
         tags: ['slack-bot'],
         startTime: processStart,

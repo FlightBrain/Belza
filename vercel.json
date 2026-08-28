@@ -1,10 +1,15 @@
 {
   "version": 2,
   "functions": {
-    "api/slack-events.js": { "maxDuration": 60 },
-    "api/cron/proactive-update.js": { "maxDuration": 30 },
-    "api/cron/check-reminders.js": { "maxDuration": 15 },
-    "api/cron/task-reconciler.js": { "maxDuration": 30 }
+    "api/slack-events.js": {
+      "maxDuration": 60
+    },
+    "api/cron/proactive-update.js": {
+      "maxDuration": 60
+    },
+    "api/cron/check-reminders.js": {
+      "maxDuration": 15
+    }
   },
   "crons": [
     {

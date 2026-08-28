@@ -1,7 +1,5 @@
 export function buildSystemPrompt({
-  notionContext,
   calendarContext,
-  marketingEventsContext,
   capabilities,
   intent,
   threadContext,
@@ -125,11 +123,7 @@ CRITICAL: when referencing who said what, use these labels. do NOT mix up names.
 
 ${threadContext}
 ` : ''}## team calendar
-${calendarContext || '[not connected]'}
-
-## notion context
-${notionContext || '[not connected]'}
-${marketingEventsContext ? `\n## marketing events calendar (H2 Field Marketing Program)\n${marketingEventsContext}\n` : ''}`.trim();
+${calendarContext || '[not connected]'}`.trim();
 }
 
 function buildIntentRules(intent) {
