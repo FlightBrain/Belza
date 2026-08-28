@@ -49,7 +49,7 @@ import {
   neutralizeDeparture,
 } from '../scripts/memory-distill.js';
 import { normalizeName, buildAliases, preferredName } from '../lib/names.js';
-import { buildPerson, humans } from '../lib/roster.js';
+import { buildPerson, humans, isStale } from '../lib/roster.js';
 import {
   extractMentions,
   substituteMentions,
@@ -2088,5 +2088,117 @@ describe('identityToPromptContext', () => {
     const v1 = buildPerson({ id: 'U1', name: 'a', profile: { display_name: 'Alec', real_name: 'Alec Sloan' } });
     const v2 = buildPerson({ id: 'U1', name: 'a', profile: { display_name: 'Big Al', real_name: 'Alec Sloan' } }, v1);
     assert.ok(identityToPromptContext(v2).includes('Alec'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1 bug-hunt regressions
+// ---------------------------------------------------------------------------
+
+describe('regression: ambiguity is not raised when the user named everyone', () => {
+  function twoAlecs() {
+    return { people: [
+      buildPerson({ id: 'UALEC001', name: 'alec.sloan', is_bot: false, profile: { display_name: 'Alec', real_name: 'Alec Sloan', title: 'SDR' } }),
+      buildPerson({ id: 'UALEC002', name: 'alec.moreno', is_bot: false, profile: { display_name: 'Alec M', real_name: 'Alec Moreno', title: 'AE' } }),
+    ] };
+  }
+
+  it('resolves both when both full names are given', () => {
+    // The old `alreadyResolved.length === 1` check fell through here and asked
+    // "which alec do you mean" about a message that had already said both.
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> tell me about alec sloan and alec moreno`, roster: twoAlecs(), botUserId: BOT_ID });
+    assert.deepEqual(r.ambiguous, []);
+    assert.deepEqual(r.people.map((p) => p.userId).sort(), ['UALEC001', 'UALEC002']);
+  });
+
+  it('still asks when only the bare shared name is given', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec`, roster: twoAlecs(), botUserId: BOT_ID });
+    assert.equal(r.ambiguous.length, 1);
+    assert.deepEqual(r.people, []);
+  });
+});
+
+describe('regression: possessive forms resolve', () => {
+  function roster() {
+    return { people: [
+      buildPerson({ id: 'USACHA01', name: 'sacha', is_bot: false, profile: { display_name: '', real_name: 'Sacha Thompson-Sargoni', title: 'SDR' } }),
+    ] };
+  }
+
+  it("matches X's, the most common person-lookup phrasing", () => {
+    // normalizeName strips the apostrophe, so "sacha's" tokenizes to "sachas".
+    for (const q of ["who is sacha's manager", "whats sacha's title", "hows sacha's pipeline"]) {
+      assert.equal(resolveByName(q, roster()).matches.length, 1, q);
+    }
+  });
+
+  it('matches the apostrophe-less typo too', () => {
+    assert.equal(resolveByName('sachas out today', roster()).matches.length, 1);
+  });
+
+  it('does not match an unrelated word ending in s', () => {
+    assert.deepEqual(resolveByName('the sachets are in the drawer', roster()).matches, []);
+  });
+});
+
+describe('regression: links and emails do not produce name matches', () => {
+  function roster() {
+    return { people: [
+      buildPerson({ id: 'UALEC001', name: 'alec.sloan', is_bot: false, profile: { display_name: 'Alec', real_name: 'Alec Sloan', title: 'SDR' } }),
+      buildPerson({ id: 'UAVA0001', name: 'ava', is_bot: false, profile: { display_name: 'Ava Baker', real_name: 'Ava Baker', title: 'SDR' } }),
+    ] };
+  }
+
+  it('ignores a name inside Slack link syntax', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> look at <https://www.notion.so/Alec-Sloan-1on1-abc123|the doc>`, roster: roster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+  });
+
+  it('ignores a name inside a bare URL slug', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> check https://notion.so/alec-sloan-notes`, roster: roster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+  });
+
+  it('ignores a name inside an email address', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> emailed alec.sloan@braintrust.dev about it`, roster: roster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+    assert.deepEqual(r.ambiguous, []);
+  });
+
+  it('still resolves a plainly typed name in the same message as a link', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> ava said to check https://notion.so/alec-sloan-notes`, roster: roster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['UAVA0001']);
+  });
+});
+
+describe('regression: substituteMentions never emits a raw user ID', () => {
+  it('falls back to @someone when every name field is empty', () => {
+    // preferredName's last resort is the userId; emitting it would put a raw
+    // ID into the prompt and the channel log.
+    const nameless = buildPerson({ id: 'U012ABC34', name: '', is_bot: false, profile: { display_name: '', real_name: '' } });
+    assert.equal(nameless.preferredName, 'U012ABC34');
+    const out = substituteMentions('hi <@U012ABC34>', { people: [nameless] }, BOT_ID);
+    assert.ok(!/U012ABC34/.test(out));
+    assert.ok(out.includes('@someone'));
+  });
+});
+
+describe('regression: a partial roster is not trusted for a full TTL', () => {
+  it('marks a complete roster fresh', () => {
+    const roster = { fetchedAt: new Date().toISOString(), partial: false, people: [] };
+    assert.equal(isStale(roster), false);
+  });
+
+  it('treats a partial roster as stale well before the normal TTL', () => {
+    // 10 minutes old: fine for a complete roster, already stale for a partial
+    // one so the next lookup retries instead of serving known-missing people.
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    assert.equal(isStale({ fetchedAt: tenMinAgo, partial: false, people: [] }), false);
+    assert.equal(isStale({ fetchedAt: tenMinAgo, partial: true, people: [] }), true);
+  });
+
+  it('treats a roster with no fetchedAt as stale', () => {
+    assert.equal(isStale({ fetchedAt: null, people: [] }), true);
+    assert.equal(isStale(null), true);
   });
 });

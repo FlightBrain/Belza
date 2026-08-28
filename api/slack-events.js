@@ -72,6 +72,11 @@ async function processEvent(body) {
   const background = [];
   try {
     await processEventInner(body, background);
+  } catch (e) {
+    // waitUntil() just forwards the promise; it does not catch. Without this,
+    // any throw in the pipeline became an unhandled rejection and the user got
+    // silence - no reply, no error, nothing in the logs beyond the crash.
+    console.error('processEvent failed:', e.message, e.stack?.slice(0, 400));
   } finally {
     if (background.length) await Promise.allSettled(background);
   }
@@ -123,25 +128,12 @@ async function processEventInner(body, background) {
     return;
   }
 
-  // Roster first, because mention resolution depends on it.
+  // Trigger detection runs on RAW text (it looks for the literal <@BOTID>)
+  // and needs no roster, so it comes first. Doing the roster load before this
+  // meant every human message in every channel the bot sits in paid for a
+  // roster - including a blocking conversations.members + N x users.info
+  // fan-out on first contact with a channel the bot will never reply in.
   //
-  // Lazy + TTL-cached: a fresh roster is a single KV read, a stale one is
-  // served immediately while it refreshes behind the reply, and only a cold
-  // cache blocks. No scheduler involved - see the header of lib/roster.js
-  // for why a cron was rejected. Always anchored on the team channel so a DM
-  // or another channel can still resolve teammates; see getIdentityRoster.
-  const roster = await getIdentityRoster(event.channel, AMBIENT_LOG_CHANNEL_ID, {
-    keepAlive: (p) => background.push(p),
-  });
-
-  // THE ORDER THAT MATTERS: substitute <@U…> mentions to real names using
-  // the roster BEFORE cleanSlackText gets a chance to degrade them to the
-  // literal string "@U09GGU5ED24". Everything downstream - intent, name
-  // matching, the prompt, the channel log - sees names, never raw IDs.
-  const namedText = substituteMentions(event.text, roster, botUserId);
-  const cleanedText = cleanSlackText(namedText);
-  if (!cleanedText) return;
-
   // In a DM there's no ambiguity about who a message is for - it's always
   // the bot, no @mention needed. Only real multi-person surfaces (channels,
   // group DMs) need the mention/thread-continuation logic below.
@@ -161,15 +153,41 @@ async function processEventInner(body, background) {
     }
   }
 
+  // Cheap exit before any roster or LLM work: not for the bot, and not in the
+  // channel we keep ambient memory for, so there is nothing to do.
+  if (!trigger && event.channel !== AMBIENT_LOG_CHANNEL_ID) {
+    console.log(`no trigger: ignoring channel=${event.channel} thread_ts=${event.thread_ts || 'none'} ts=${event.ts}`);
+    return;
+  }
+
+  // Roster, because mention resolution depends on it.
+  //
+  // Lazy + TTL-cached: a fresh roster is a single KV read, a stale one is
+  // served immediately while it refreshes behind the reply, and only a cold
+  // cache blocks. No scheduler involved - see the header of lib/roster.js
+  // for why a cron was rejected. Always anchored on the team channel so a DM
+  // or another channel can still resolve teammates; see getIdentityRoster.
+  const roster = await getIdentityRoster(event.channel, AMBIENT_LOG_CHANNEL_ID, {
+    keepAlive: (p) => background.push(p),
+  });
+
+  // THE ORDER THAT MATTERS: substitute <@U…> mentions to real names using
+  // the roster BEFORE cleanSlackText gets a chance to degrade them to the
+  // literal string "@U09GGU5ED24". Everything downstream - intent, name
+  // matching, the prompt, the channel log - sees names, never raw IDs.
+  const namedText = substituteMentions(event.text, roster, botUserId);
+  const cleanedText = cleanSlackText(namedText);
+  if (!cleanedText) return;
+
   if (!trigger) {
-    // Not directed at the bot, but if it's in the SDR friends channel, still
+    // Not directed at the bot, but it IS in the SDR friends channel, so still
     // remember it happened - ambient memory, fed continuously instead of
     // only on bot-directed messages. Awaited (not fire-and-forget) because
     // this whole handler runs inside Vercel's waitUntil, which only keeps
     // the invocation alive until the promise IT'S GIVEN resolves - an
     // un-awaited chain here could get cut off mid-write once processEvent
     // returns, silently dropping the KV writes.
-    if (event.channel === AMBIENT_LOG_CHANNEL_ID && event.user) {
+    if (event.user) {
       try {
         // Prefer the roster's name: it already applies Slack's
         // display_name -> real_name -> handle fallback (3 of 13 humans in
@@ -215,15 +233,37 @@ async function processEventInner(body, background) {
   // useless when you've just renamed someone and want to test it. Escape
   // hatch so nobody has to wait on a cache.
   if (/\b(refresh|rebuild|reload)\s+(the\s+)?roster\b/i.test(cleanedText)) {
-    const fresh = await refreshRoster(event.channel);
-    const active = humans(fresh);
-    await postToSlack({
-      channel: event.channel,
-      text:
+    // Refresh the TEAM channel, because that is what getIdentityRoster
+    // anchors on. Refreshing event.channel meant that in a DM this wrote a
+    // KV key nothing ever reads, so the documented escape hatch did nothing.
+    // The current channel is refreshed too when it's a real channel that the
+    // merge actually consults.
+    const targets = [AMBIENT_LOG_CHANNEL_ID];
+    if (event.channel !== AMBIENT_LOG_CHANNEL_ID && /^[CG]/.test(event.channel)) {
+      targets.push(event.channel);
+    }
+
+    let text;
+    try {
+      const results = await Promise.all(targets.map((c) => refreshRoster(c)));
+      const merged = new Map();
+      for (const r of results) for (const p of r.people) merged.set(p.userId, p);
+      const all = [...merged.values()];
+      const active = all.filter((p) => !p.isBot && !p.deleted);
+      const anyPartial = results.some((r) => r.partial);
+      text =
         `roster refreshed: ${active.length} teammates, ` +
-        `${fresh.people.length - active.length} bots/deactivated.`,
-      thread_ts: replyThreadTs,
-    });
+        `${all.length - active.length} bots/deactivated.` +
+        (anyPartial ? ' some lookups were rate limited, serving cached entries for those.' : '');
+    } catch (e) {
+      // refreshRoster throws on any non-ok Slack response. Unhandled here it
+      // rejected out through waitUntil, which does not catch, so the user got
+      // no reply and no error at all.
+      console.error(`roster refresh command failed: ${e.message}`);
+      text = "couldn't refresh the roster just now, slack pushed back. try again in a minute.";
+    }
+
+    await postToSlack({ channel: event.channel, text, thread_ts: replyThreadTs });
     return;
   }
 
@@ -238,13 +278,32 @@ async function processEventInner(body, background) {
     excludeUserId: event.user,
   });
 
-  // An ambiguous name must be asked about, never guessed. Handled before
-  // anything else spends a token on the wrong person.
+  // An ambiguous name must be asked about, never guessed - but only when the
+  // message is actually ASKING about a person. Gating every intent meant an
+  // incidentally-mentioned ambiguous name suppressed the real answer: with two
+  // Alecs, "whats the pricing page, alec said it moved" got "which alec do you
+  // mean" instead of the link. For any other intent we just carry no facts for
+  // that name and answer the question that was asked.
   if (resolved.ambiguous.length > 0) {
-    const question = ambiguityPrompt(resolved.ambiguous);
-    console.log(`identity: ambiguous ${JSON.stringify(resolved.ambiguous.map((a) => a.alias))}, asking`);
-    await postToSlack({ channel: event.channel, text: question, thread_ts: replyThreadTs });
-    return;
+    const aliases = resolved.ambiguous.map((a) => a.alias);
+    if (intent === 'identity_person_lookup') {
+      const question = ambiguityPrompt(resolved.ambiguous);
+      console.log(`identity: ambiguous ${JSON.stringify(aliases)}, asking`);
+      await postToSlack({ channel: event.channel, text: question, thread_ts: replyThreadTs });
+      // Still record the turn. This reply path was previously invisible to
+      // both the profile store and Braintrust. Full span tracing for it lands
+      // in Phase 3 alongside the rest of the instrumentation.
+      if (event.user) {
+        await updateUserProfile(event.user, {
+          displayName: await resolveUser(event.user),
+          message: cleanedText,
+          intent,
+          channel: event.channel,
+        }).catch((e) => console.error('profile update failed:', e.message));
+      }
+      return;
+    }
+    console.log(`identity: ambiguous ${JSON.stringify(aliases)} but intent=${intent}, ignoring and answering`);
   }
 
   // Apps in the channel (Notion, ChatGPT Agents, claudesington itself) can

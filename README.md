@@ -270,8 +270,30 @@ Two Slack API subtleties that are easy to get wrong and are load-bearing here:
 - Surname-only reference ("belza", "sloan") is intentionally not an alias.
   Surnames collide with ordinary words far more than first names do.
 - Single-token aliases are filtered through a stopword list, so a display name
-  like "Big Al" does not make "big" resolve to a person.
+  like "Big Al" does not make "big" resolve to a person. The list covers filler
+  words, not every English verb, so a teammate named e.g. "Mark" would still
+  match "mark the calendar". Add such names to `ALIAS_STOPWORDS` if it happens.
 - Aliases shorter than 3 characters are dropped.
+- URLs, Slack link syntax and email addresses are stripped before name
+  matching, but a hyphenated **document name** ("the ava-baker-onboarding doc")
+  still matches. Accepted: a doc named after someone usually is about them.
+- Ambiguity only blocks the reply for `identity_person_lookup`. For any other
+  intent an ambiguous name is ignored and the actual question gets answered.
+
+### Degradation behavior
+
+- **Partial roster.** If `users.info` fails for some members, those people keep
+  their previously cached record instead of vanishing, the roster is marked
+  `partial`, and its effective TTL drops to 5 minutes so the next lookup
+  retries. Before this, a rate-limited refresh cached a truncated roster as
+  fresh for 6 hours, and a dropped member's `<@U…>` tag rendered as `@someone`.
+- **Retry budgets are cumulative, not per-attempt.** `lib/claude.js` allows
+  20s of total sleep, `slackApi` 8s. A per-attempt cap is useless: 3 attempts x
+  24s is 72s of sleeping inside a function with a 60s `maxDuration`, which
+  kills the invocation and posts nothing - worse than failing fast and letting
+  the caller degrade to a graceful reply.
+- `processEvent` has both a `catch` and a `finally`. `waitUntil` forwards the
+  promise without catching, so an uncaught throw meant total silence.
 
 ## Groq rate limit
 
