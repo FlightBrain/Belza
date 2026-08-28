@@ -52,6 +52,8 @@ import {
   neutralizeDeparture,
 } from '../scripts/memory-distill.js';
 import {
+  MODEL,
+  MODEL_TPM,
   assertNotServerless,
   parseArgs,
   parseTimeBound,
@@ -86,6 +88,11 @@ import {
   formatStats,
 } from '../scripts/backfill-history.js';
 import { normalizeName, buildAliases, preferredName } from '../lib/names.js';
+import {
+  createTokenPacer,
+  projectWallClockMs,
+  formatDuration,
+} from '../lib/token-pacer.js';
 import { buildPerson, humans, isStale } from '../lib/roster.js';
 import {
   extractMentions,
@@ -3092,9 +3099,21 @@ describe('parseDistillResponse', () => {
   });
 
   it('returns empty on malformed output instead of throwing', () => {
-    assert.deepEqual(parseDistillResponse('not json at all'), { lifeEvents: [], notes: [] });
-    assert.deepEqual(parseDistillResponse(''), { lifeEvents: [], notes: [] });
-    assert.deepEqual(parseDistillResponse('{"notes": "a string"}'), { lifeEvents: [], notes: [] });
+    assert.deepEqual(parseDistillResponse('not json at all'), { lifeEvents: [], notes: [], parsedOk: false });
+    assert.deepEqual(parseDistillResponse(''), { lifeEvents: [], notes: [], parsedOk: false });
+    // Valid JSON with the wrong shape still PARSED - it just had nothing
+    // usable. That is a different thing from the model failing to emit JSON,
+    // and only the latter should be counted as a parse failure.
+    assert.deepEqual(parseDistillResponse('{"notes": "a string"}'), { lifeEvents: [], notes: [], parsedOk: true });
+  });
+
+  it('reports parsedOk so a silent extraction is distinguishable from a broken reply', () => {
+    // Observed live: qwen emitted `{"lifeEvents": [], "notes": ["..."]]}` -
+    // invalid JSON - in one call out of four during verification. Without this
+    // flag that is indistinguishable from "nothing worth extracting", and a run
+    // where the model kept failing would look like a run that found nothing.
+    assert.equal(parseDistillResponse('{"lifeEvents": [], "notes": ["a"]]}').parsedOk, false);
+    assert.equal(parseDistillResponse('{"lifeEvents": [], "notes": ["a"]}').parsedOk, true);
   });
 
   it('drops non-string notes', () => {
@@ -3235,7 +3254,17 @@ describe('formatCostEstimate', () => {
     assert.match(out, /llm calls\s+4 \(cap 20\)/);
     assert.match(out, /total tokens\s+~4600 \(cap 60000\)/);
     assert.match(out, /\$0\.0019/);
-    assert.match(out, /openai\/gpt-oss-20b/);
+    assert.match(out, /qwen\/qwen3\.8-27b/);
+  });
+
+  it('names the DISTILL model, which must not be the live bot model', () => {
+    // Groq rate-limits per model per key. Pointing the distiller at the live
+    // bot's model means a 45-minute batch can starve the bot people are
+    // actually talking to - which already happened once in this project when
+    // test runs ate the whole gpt-oss daily budget.
+    assert.equal(MODEL, 'qwen/qwen3.8-27b');
+    assert.notEqual(MODEL, 'openai/gpt-oss-20b');
+    assert.equal(MODEL_TPM, 8000);
   });
 });
 
@@ -3923,5 +3952,141 @@ describe('regression: dates are stamped in Pacific, not the server zone', () => 
     const out = profileToPromptContext(profile, [{ message: 'hi', timestamp: ts }]);
     assert.match(out, /Aug 28/);
     assert.ok(!/Aug 29/.test(out), out);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token pacer (Phase 4 pacing)
+// ---------------------------------------------------------------------------
+
+describe('createTokenPacer', () => {
+  const fake = (tpm = 8000) => {
+    let clock = 0;
+    const slept = [];
+    const pacer = createTokenPacer({
+      tokensPerMinute: tpm,
+      now: () => clock,
+      sleep: async (ms) => { slept.push(ms); clock += ms; },
+    });
+    return { pacer, slept, clockAt: () => clock };
+  };
+
+  it('rejects a request larger than the whole bucket instead of hanging', () => {
+    // The guard that enforces "chunk size must stay under the per-minute
+    // limit". Waiting can never satisfy this, so it must fail at plan time.
+    const { pacer } = fake();
+    assert.throws(() => pacer.peekWaitMs(9000), /can never fit/);
+  });
+
+  it('validates its own construction', () => {
+    assert.throws(() => createTokenPacer({ tokensPerMinute: 0 }), /must be positive/);
+    assert.throws(() => createTokenPacer({ tokensPerMinute: 8000, safety: 0 }), /safety/);
+    assert.throws(() => createTokenPacer({ tokensPerMinute: 8000, safety: 2 }), /safety/);
+  });
+
+  it('lets an initial burst through, then throttles', async () => {
+    const { pacer, slept } = fake();
+    // capacity is 6800; four 1700-token calls exactly fill it.
+    for (let i = 0; i < 4; i++) assert.equal(await pacer.reserve(1700), 0);
+    assert.deepEqual(slept, []);
+    // The fifth has to wait.
+    assert.ok((await pacer.reserve(1700)) > 0);
+  });
+
+  it('waits before sending rather than reacting to a 429', async () => {
+    const { pacer, slept } = fake();
+    await pacer.reserve(6800);
+    const waited = await pacer.reserve(6800);
+    // A full bucket takes a full minute to refill.
+    assert.ok(waited >= 59_000 && waited <= 61_000, `waited ${waited}`);
+    assert.equal(slept.length, 1);
+  });
+
+  it('settle() debits an underestimate so the next call waits longer', async () => {
+    const { pacer } = fake();
+    await pacer.reserve(1000);
+    const before = pacer.stats().available;
+    pacer.settle(1000, 3000);
+    assert.equal(pacer.stats().available, before - 2000);
+    assert.equal(pacer.stats().corrections, 1);
+  });
+
+  it('settle() never inflates past capacity', async () => {
+    const { pacer } = fake();
+    await pacer.reserve(100);
+    pacer.settle(100, 0);
+    assert.ok(pacer.stats().available <= pacer.capacity);
+  });
+
+  it('syncFromHeaders clamps DOWN to the API remaining count', async () => {
+    // A fresh process starts the bucket full, which is wrong if a previous
+    // process just spent budget - that produced a real 429 during
+    // verification. The API header is ground truth.
+    const { pacer } = fake();
+    assert.equal(pacer.stats().available, 6800);
+    const r = pacer.syncFromHeaders({ get: (k) => (k === 'x-ratelimit-remaining-tokens' ? '328' : null) });
+    assert.equal(r.corrected, true);
+    assert.equal(pacer.stats().available, Math.floor(328 * 0.85));
+    assert.ok(pacer.peekWaitMs(3700) > 0);
+  });
+
+  it('syncFromHeaders never inflates the bucket', () => {
+    const { pacer } = fake();
+    pacer.syncFromHeaders({ get: () => '328' });
+    const low = pacer.stats().available;
+    pacer.syncFromHeaders({ get: () => '8000' });
+    assert.equal(pacer.stats().available, low);
+  });
+
+  it('tolerates missing or junk headers', () => {
+    const { pacer } = fake();
+    assert.equal(pacer.syncFromHeaders(null), null);
+    assert.equal(pacer.syncFromHeaders({}), null);
+    assert.equal(pacer.syncFromHeaders({ get: () => null }), null);
+    assert.equal(pacer.syncFromHeaders({ get: () => 'abc' }), null);
+  });
+});
+
+describe('projectWallClockMs', () => {
+  it('projects the real corpus honestly', () => {
+    // 86 calls x 3700 tokens against 8000 TPM. Independently matches the
+    // hand estimate of ~45 minutes.
+    const units = Array.from({ length: 86 }, () => ({ tokens: 3700 }));
+    const p = projectWallClockMs(units, { tokensPerMinute: 8000 });
+    assert.equal(p.calls, 86);
+    assert.equal(p.capacity, 6800);
+    const minutes = p.ms / 60000;
+    assert.ok(minutes > 40 && minutes < 55, `projected ${minutes} minutes`);
+  });
+
+  it('holds the steady-state rate at capacity once the initial burst is excluded', () => {
+    const units = Array.from({ length: 200 }, () => ({ tokens: 1000 }));
+    const p = projectWallClockMs(units, { tokensPerMinute: 8000 });
+    const total = 200 * 1000;
+    // The bucket starts full, so one capacity's worth is free.
+    const steady = (total - p.capacity) / (p.ms / 60000);
+    assert.ok(Math.abs(steady - p.capacity) < 50, `steady rate ${steady} vs capacity ${p.capacity}`);
+  });
+
+  it('is free for an empty plan', () => {
+    const p = projectWallClockMs([], { tokensPerMinute: 8000 });
+    assert.equal(p.ms, 0);
+    assert.equal(p.calls, 0);
+  });
+
+  it('propagates the unsatisfiable-chunk error', () => {
+    assert.throws(
+      () => projectWallClockMs([{ tokens: 9000 }], { tokensPerMinute: 8000 }),
+      /can never fit/,
+    );
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats seconds, minutes and hours', () => {
+    assert.equal(formatDuration(5000), '5s');
+    assert.equal(formatDuration(125000), '2m 5s');
+    assert.equal(formatDuration(3_725_000), '1h 2m');
+    assert.equal(formatDuration(null), 'unknown');
   });
 });

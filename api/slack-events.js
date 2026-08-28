@@ -9,6 +9,7 @@ import { getCapabilities, capabilitySummary } from '../lib/capabilities.js';
 import { fetchCalendarContext } from '../lib/calendar.js';
 import { buildThreadContext } from '../lib/thread-context.js';
 import { buildSystemPrompt } from '../prompts/system.js';
+import { fitSections, budgetLogLine, RECOMMENDED_PROMPT_BUDGET_TOKENS } from '../lib/token-budget.js';
 import { callClaude } from '../lib/claude.js';
 import { applyGuardrails } from '../lib/guardrails.js';
 import { redactForChannel, isPublicSurface } from '../lib/source-visibility.js';
@@ -634,14 +635,38 @@ async function processEventInner(body, background) {
   ]);
   const retrievalFinishedAt = new Date();
 
+  // TOKEN BUDGET. The variable-length sections all grow without bound as
+  // history accumulates: threadContext is up to 20 messages, userContext
+  // carries the last 8 messages plus every channel note, and mentionedContext
+  // grows with each person named. Nothing capped the total, so the prompt got
+  // steadily larger until it either cost more per reply or hit a limit.
+  //
+  // fitSections drops and truncates by explicit priority (see
+  // lib/token-budget.js SECTION_PRIORITY): identity facts about the people
+  // being discussed are surrendered last, raw history first. thread_context
+  // and user_history keep their END, since recent messages matter more.
+  const fitted = fitSections(
+    [
+      { name: 'mentioned_facts', text: mentionedContext || '' },
+      { name: 'calendar_context', text: calendarResult?.text || '' },
+      { name: 'thread_context', text: threadContext || '' },
+      { name: 'user_profile', text: userContext || '' },
+    ],
+    { budget: RECOMMENDED_PROMPT_BUDGET_TOKENS },
+  );
+  if (fitted.truncated?.length || fitted.dropped?.length) {
+    console.log(budgetLogLine(fitted));
+  }
+  const section = (name) => fitted.sections.find((x) => x.name === name)?.text || undefined;
+
   const systemPrompt = buildSystemPrompt({
-    calendarContext: calendarResult?.text,
+    calendarContext: section('calendar_context'),
     capabilities,
     intent,
-    threadContext,
+    threadContext: section('thread_context'),
     senderName,
-    userContext,
-    mentionedContext,
+    userContext: section('user_profile'),
+    mentionedContext: section('mentioned_facts'),
   });
 
   const llmStartedAt = new Date();

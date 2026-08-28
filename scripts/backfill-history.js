@@ -27,6 +27,7 @@ import fs from 'fs';
 import path from 'path';
 import { slackApi } from '../lib/slack.js';
 import { appendChannelLogBulk, tsToIso } from '../lib/channel-log.js';
+import { createTokenPacer, projectWallClockMs, formatDuration } from '../lib/token-pacer.js';
 import { mergeChannelIntel } from '../lib/user-profiles.js';
 import { getRoster, humans } from '../lib/roster.js';
 import { normalizeName } from '../lib/names.js';
@@ -39,7 +40,23 @@ import { neutralizeDeparture } from './memory-distill.js';
 const DEFAULT_STATE_PATH = path.join('automation', 'backfill-history-state.json');
 const AUDIT_DIR = path.join('automation', 'backfill-history');
 
-const MODEL = 'openai/gpt-oss-20b';
+// The DISTILL model, deliberately different from the live bot's.
+//
+// lib/claude.js stays on openai/gpt-oss-20b. Groq's rate limits are per model
+// per key - verified from live headers, where gpt-oss showed 7927 tokens
+// remaining while qwen showed 7986 at the same moment, with unrelated reset
+// clocks. So running the distiller on qwen means a 45-minute batch cannot
+// starve the bot people are actually talking to. That was a real incident
+// earlier in this project: test runs ate the whole gpt-oss daily budget and
+// live replies started failing.
+//
+// Also: 2M tokens/day on this plan vs 200K for gpt-oss-20b, so the full
+// ~323K-token corpus fits in a single day.
+const MODEL = 'qwen/qwen3.8-27b';
+
+// Tokens per MINUTE is the binding limit, not tokens per day. Verified live:
+//   qwen/qwen3.8-27b  x-ratelimit-limit-tokens: 8000
+const MODEL_TPM = 8000;
 const MAX_OUTPUT_TOKENS = 900;
 
 // Groq's published per-million-token rates for openai/gpt-oss-20b at the time
@@ -797,16 +814,18 @@ if there is nothing safe and concrete to extract, respond {"lifeEvents": [], "no
 // ---------------------------------------------------------------------------
 
 export function parseDistillResponse(content) {
-  if (!content) return { lifeEvents: [], notes: [] };
+  // An empty reply is a broken reply, not "nothing to extract".
+  if (!content) return { lifeEvents: [], notes: [], parsedOk: false };
   const match = String(content).match(/\{[\s\S]*\}/);
   try {
     const parsed = JSON.parse(match ? match[0] : content);
     return {
       lifeEvents: Array.isArray(parsed.lifeEvents) ? parsed.lifeEvents : [],
       notes: Array.isArray(parsed.notes) ? parsed.notes.filter((n) => typeof n === 'string') : [],
+      parsedOk: true,
     };
   } catch {
-    return { lifeEvents: [], notes: [] };
+    return { lifeEvents: [], notes: [], parsedOk: false };
   }
 }
 
@@ -833,6 +852,10 @@ async function callGroq(systemPrompt, wrappedTranscript) {
   return {
     content: data.choices?.[0]?.message?.content ?? '',
     usage: data.usage || {},
+    // Returned so the pacer can clamp itself to the API's own accounting
+    // rather than trusting a bucket that started full - see
+    // lib/token-pacer.js syncFromHeaders.
+    headers: res.headers,
   };
 }
 
@@ -853,6 +876,7 @@ export function blankStats() {
     slackApiCalls: 0,
     llmCalls: 0,
     tokensSpent: 0,
+    parseFailures: 0,
     notesAddedPerPerson: {},
     lifeEventsAddedPerPerson: {},
     notesRejected: {},
@@ -874,6 +898,7 @@ export function formatStats(stats, { dryRun }) {
     `slack api calls       ${stats.slackApiCalls} (history + replies; roster calls not counted)`,
     `llm calls             ${stats.llmCalls}`,
     `tokens spent          ${stats.tokensSpent}`,
+    `unparseable replies   ${stats.parseFailures || 0}`,
   ];
 
   const names = new Set([
@@ -1102,6 +1127,44 @@ async function main(argv) {
   console.log('');
   console.log(formatCostEstimate(estimate, opts));
 
+  // PACING. Waits before sending rather than reacting to 429s - see the header
+  // of lib/token-pacer.js for why a batch job needs the opposite shape from
+  // the live bot's retry.
+  const pacer = createTokenPacer({ tokensPerMinute: MODEL_TPM });
+
+  // A single call larger than the per-minute budget can NEVER succeed, no
+  // matter how long anything waits. Fail here, at plan time, with the number
+  // that has to change - not 40 minutes into a run.
+  const perCall = units.map((u) => u.inputTokens + u.outputTokens);
+  const biggest = Math.max(0, ...perCall);
+  if (biggest > pacer.capacity) {
+    console.error('');
+    console.error(
+      `backfill: REFUSING to proceed - largest single call is ${biggest} tokens, ` +
+        `over the usable per-minute budget of ${pacer.capacity} ` +
+        `(${MODEL_TPM}/min x ${pacer.safety} safety).`,
+    );
+    console.error(
+      `  lower --chunk-tokens (currently ${opts.chunkTokens}); output is fixed at ` +
+        `${MAX_OUTPUT_TOKENS} and the system prompt is ~${systemPromptTokens}.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const projection = projectWallClockMs(
+    perCall.map((tokens) => ({ tokens })),
+    { tokensPerMinute: MODEL_TPM },
+  );
+  console.log('');
+  console.log('pacing projection (token bucket, waits before sending):');
+  console.log(`  model             ${MODEL}`);
+  console.log(`  limit             ${MODEL_TPM} tokens/min, pacing at ${pacer.capacity} (${Math.round(pacer.safety * 100)}%)`);
+  console.log(`  largest call      ${biggest} tokens (must stay under ${pacer.capacity})`);
+  console.log(`  projected wall clock  ${formatDuration(projection.ms)}`);
+  console.log(`  of which waiting      ${formatDuration(projection.waitMs)}`);
+  console.log(`  longest single wait   ${formatDuration(projection.longestWaitMs)}`);
+
   const cap = enforceSpendCap(estimate, opts);
   if (!cap.ok) {
     console.error('');
@@ -1126,7 +1189,14 @@ async function main(argv) {
     return;
   }
 
-  const audit = { runAt: new Date().toISOString(), channel: opts.channel, estimate, people: [] };
+  const audit = {
+    runAt: new Date().toISOString(),
+    channel: opts.channel,
+    model: MODEL,
+    estimate,
+    projectedWallClockMs: projection.ms,
+    people: [],
+  };
 
   for (const unit of units) {
     const name = unit.person.preferredName;
@@ -1143,17 +1213,45 @@ async function main(argv) {
       break;
     }
 
+    // Wait for budget BEFORE sending. A paced run should never see a 429.
+    const reserved = unit.inputTokens + unit.outputTokens;
+    const waited = await pacer.reserve(reserved);
+    if (waited > 0) {
+      console.log(`backfill: paced ${formatDuration(waited)} before ${label}`);
+    }
+
     let result;
     try {
       result = await callGroq(buildDistillPrompt(name), wrapTranscript(unit.transcript));
     } catch (e) {
+      // The reservation is already spent; do not refund it. If this failed
+      // because of a rate limit we were closer to the edge than estimated,
+      // and refunding would make the next call more likely to fail too.
       console.error(`backfill: distill failed for ${label}: ${e.message}`);
       continue;
     }
+    const actual = result.usage.total_tokens || reserved;
+    // Reconcile chars/4 against what the API actually billed, so an
+    // underestimate is paid back instead of accumulating into 429s.
+    pacer.settle(reserved, actual);
+    // And clamp to the API's own remaining count, which is ground truth.
+    const sync = pacer.syncFromHeaders(result.headers);
+    if (sync?.corrected) {
+      console.log(`backfill: pacer corrected to API remaining=${sync.remaining}`);
+    }
     stats.llmCalls += 1;
-    stats.tokensSpent += result.usage.total_tokens || unit.inputTokens + unit.outputTokens;
+    stats.tokensSpent += actual;
 
     const parsed = parseDistillResponse(result.content);
+    // The model sometimes returns malformed JSON - observed qwen emitting
+    // `...]]}` once in four calls during verification. parseDistillResponse
+    // swallows that and returns empty, which would look identical to "nothing
+    // worth extracting". Count it so a run that silently extracted nothing is
+    // distinguishable from one where the model just kept failing to emit JSON.
+    if (!parsed.parsedOk) {
+      stats.parseFailures = (stats.parseFailures || 0) + 1;
+      console.warn(`backfill: unparseable model output for ${label}`);
+    }
 
     const notes = [];
     for (const raw of parsed.notes) {
@@ -1221,4 +1319,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { main as _main, MODEL, MAX_OUTPUT_TOKENS };
+export { main as _main, MODEL, MODEL_TPM, MAX_OUTPUT_TOKENS };

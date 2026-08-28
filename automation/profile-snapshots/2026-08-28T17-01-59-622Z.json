@@ -1,0 +1,1800 @@
+{
+  "takenAt": "2026-08-28T17:01:59.624Z",
+  "keyCount": 25,
+  "commit": "local",
+  "data": {
+    "chanlog:C093Z82DK18": [
+      {
+        "userId": "U09PZ2E5WLA",
+        "displayName": "Kensington Belza",
+        "message": "nate is gone next thur to monday",
+        "ts": "1787929070.254209",
+        "timestamp": "2026-08-28T14:57:51.481Z"
+      },
+      {
+        "userId": "U0AAPDFRBMJ",
+        "displayName": "Keslar Simpson",
+        "message": "whos getting the AI burger monday",
+        "ts": "1787929658.826229",
+        "timestamp": "2026-08-28T15:07:40.005Z"
+      },
+      {
+        "userId": "U09GGU5ED24",
+        "displayName": "Sacha Thompson-Sargoni",
+        "message": "traveler",
+        "ts": "1787931681.463399",
+        "timestamp": "2026-08-28T15:41:23.395Z"
+      },
+      {
+        "userId": "U09JREKB868",
+        "displayName": "Alec",
+        "message": "Can anyone swap from 1:30 &gt; 1pm group for Forecast review?",
+        "ts": "1787932736.905349",
+        "timestamp": "2026-08-28T15:58:57.398Z"
+      },
+      {
+        "userId": "U0942L05JAV",
+        "displayName": "Ava Baker",
+        "message": "yes",
+        "ts": "1787933631.152359",
+        "timestamp": "2026-08-28T16:13:51.833Z"
+      },
+      {
+        "userId": "U0942L05JAV",
+        "displayName": "Ava Baker",
+        "message": "is this a midget",
+        "ts": "1787934245.410279",
+        "timestamp": "2026-08-28T16:24:05.915Z"
+      },
+      {
+        "userId": "U09GGU5ED24",
+        "displayName": "Sacha Thompson-Sargoni",
+        "message": "a what?? ava???",
+        "ts": "1787934374.567619",
+        "timestamp": "2026-08-28T16:26:15.072Z"
+      },
+      {
+        "userId": "U09PZ2E5WLA",
+        "displayName": "Kensington Belza",
+        "message": "????",
+        "ts": "1787934439.546959",
+        "timestamp": "2026-08-28T16:27:20.148Z"
+      },
+      {
+        "userId": "U09PZ2E5WLA",
+        "displayName": "Kensington Belza",
+        "message": "A WHAT",
+        "ts": "1787934441.703219",
+        "timestamp": "2026-08-28T16:27:22.307Z"
+      },
+      {
+        "userId": "U0942L05JAV",
+        "displayName": "Ava Baker",
+        "message": "little person *",
+        "ts": "1787934457.673549",
+        "timestamp": "2026-08-28T16:27:38.178Z"
+      },
+      {
+        "userId": "U09GGU5ED24",
+        "displayName": "Sacha Thompson-Sargoni",
+        "message": "hr training in coming",
+        "ts": "1787934489.061079",
+        "timestamp": "2026-08-28T16:28:09.725Z"
+      },
+      {
+        "userId": "U09GGU5ED24",
+        "displayName": "Sacha Thompson-Sargoni",
+        "message": "my fri lunch is ufg for whoever wants it",
+        "ts": "1787935062.441009",
+        "timestamp": "2026-08-28T16:37:43.492Z"
+      },
+      {
+        "userId": "U0B2CS5PBTP",
+        "displayName": "Duncan Lewis",
+        "message": "can someone grab this person's (https://www.linkedin.com/sales/lead/ACwAABNkg64BXmzWRozD4CGs-IczSfZZmgjNQCs,NAME_SEARCH,kFoZ?showAppPrompt=false) number? out of Nooks credits",
+        "ts": "1787935774.335809",
+        "timestamp": "2026-08-28T16:49:35.401Z"
+      },
+      {
+        "userId": "U0AAPDFRBMJ",
+        "displayName": "Keslar Simpson",
+        "message": "<tel:+447782465034|+44 7782 465034>",
+        "ts": "1787935812.466739",
+        "timestamp": "2026-08-28T16:50:12.890Z"
+      },
+      {
+        "userId": "U0B2CS5PBTP",
+        "displayName": "Duncan Lewis",
+        "message": "thank yo",
+        "ts": "1787935838.684419",
+        "timestamp": "2026-08-28T16:50:39.122Z"
+      },
+      {
+        "userId": "U0B2CS5PBTP",
+        "displayName": "Duncan Lewis",
+        "message": "you",
+        "ts": "1787935840.985589",
+        "timestamp": "2026-08-28T16:50:41.346Z"
+      }
+    ],
+    "hist:U0942L05JAV": [
+      {
+        "message": "where is kensington",
+        "intent": "calendar_whereabouts",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T15:13:35.678Z"
+      },
+      {
+        "message": "yes",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:13:51.854Z"
+      },
+      {
+        "message": "is this a midget",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:24:05.951Z"
+      },
+      {
+        "message": "little person *",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:27:38.189Z"
+      }
+    ],
+    "hist:U09GGU5ED24": [
+      {
+        "message": "holy he's back",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:03:11.688Z"
+      },
+      {
+        "message": "who is Joey Register",
+        "intent": "identity_person_lookup",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:04:24.759Z"
+      },
+      {
+        "message": "where does owen live",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:05:29.007Z"
+      },
+      {
+        "message": "can you make an owen emoji",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:06:40.273Z"
+      },
+      {
+        "message": "this is the same as the time inbetween getting a job and starting a job explained perfectly",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T22:42:59.440Z"
+      },
+      {
+        "message": "no way",
+        "intent": "banter",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T22:44:27.344Z"
+      },
+      {
+        "message": "traveler",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T15:41:23.454Z"
+      },
+      {
+        "message": "a what?? ava???",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:26:15.084Z"
+      },
+      {
+        "message": "hr training in coming",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:28:09.732Z"
+      },
+      {
+        "message": "my fri lunch is ufg for whoever wants it",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:37:43.510Z"
+      }
+    ],
+    "hist:U09JREKB868": [
+      {
+        "message": "do something funny",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:01:35.194Z"
+      },
+      {
+        "message": "no way you're back",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:01:50.917Z"
+      },
+      {
+        "message": "Can anyone swap from 1:30 &gt; 1pm group for Forecast review?",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T15:58:57.414Z"
+      }
+    ],
+    "hist:U09PZ2E5WLA": [
+      {
+        "message": "what marketing events are upcoming",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-26T23:32:02.895Z"
+      },
+      {
+        "message": "Was actually Fixing that rn lol",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:02:19.985Z"
+      },
+      {
+        "message": "Oh",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:02:24.979Z"
+      },
+      {
+        "message": "Are the moon bear back ???",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:02:48.715Z"
+      },
+      {
+        "message": "can you tell me what makeeting events are upcoming",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T00:14:21.883Z"
+      },
+      {
+        "message": "waht amrkjertiugn events are comign up",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:27:32.648Z"
+      },
+      {
+        "message": "what is today",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:30:44.596Z"
+      },
+      {
+        "message": "how r u",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:30:53.764Z"
+      },
+      {
+        "message": "what do i have upcomign meeting wise",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:30:59.489Z"
+      },
+      {
+        "message": "some feedback have the link attacked to the meeting or soemthign dont have massive dstrign of text always atach it to the mssg,",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:46:06.406Z"
+      },
+      {
+        "message": "what r u doing today",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T16:46:51.833Z"
+      },
+      {
+        "message": "why would it smell like pancakes at work at 10am?? look where we work and figure that out.",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:57:36.207Z"
+      },
+      {
+        "message": "nono actually look find what shops are around is",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:58:28.066Z"
+      },
+      {
+        "message": "you know we are braintrust find where our office is located and figure this out sherlock.",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:59:36.366Z"
+      },
+      {
+        "message": "if you have the adress you should be able to find the cross roads online and solve this myster",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:00:03.699Z"
+      },
+      {
+        "message": "okay now use google to find the dam shop",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:00:17.885Z"
+      },
+      {
+        "message": "is owen the goat or ai slop bowl",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:00:50.521Z"
+      },
+      {
+        "message": "tell your AE.",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:01:58.913Z"
+      },
+      {
+        "message": "what do i do if my director of aI no showed",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:12:08.669Z"
+      },
+      {
+        "message": "can you put spaces after commas??",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:12:18.143Z"
+      },
+      {
+        "message": "you didnt put one",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:12:31.874Z"
+      },
+      {
+        "message": "why do u alwas haev rocket wsships",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:12:56.739Z"
+      },
+      {
+        "message": "1. you frogot the space after the commadn agian",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:13:14.838Z"
+      },
+      {
+        "message": "stop with the rocketr ship",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:13:20.154Z"
+      },
+      {
+        "message": "oaky so the call happend, i called her nothign i linkedin adn emailed her she was actepd ont he caqlendar what wodul Nate my boss tell me to do",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:13:52.487Z"
+      },
+      {
+        "message": "the zoom call already happedn adn she was acpepte don it but never showed",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:14:12.001Z"
+      },
+      {
+        "message": "you dont alwasy need ot say \"hey_my name if weve already eben talkignm",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:14:45.095Z"
+      },
+      {
+        "message": "forgot the commas again",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:14:59.445Z"
+      },
+      {
+        "message": "how would you make this better to the company artison with ava the BDr Hey Sam! I counted on my bike to work today how many times I saw Ava. It was 6. I see her everywhere, so wanted to reach out. I'm with Braintrust. We help teams improve Agent quality in production through evals and observability. Given the scale of Ava growing, curious how you're thinking about evals + improving agent quality end to end. Teams like Instacart, Salesforce, Dropbox, Salesforce Granola, and Notion use Braintrust for this.Lmk if you'd be open quick chat. cheers",
+        "intent": "braintrust_resources",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:11:41.560Z"
+      },
+      {
+        "message": "we decied on htis for the intro Hey Sam! I counted on my bike to work today how many times I saw Ava. It was 6. Wanted to reach out before I see her 6 more times Omw home",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:12:00.666Z"
+      },
+      {
+        "message": "who am I and who is Ahlborn",
+        "intent": "identity_person_lookup",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:13:25.763Z"
+      },
+      {
+        "message": "do you remebr him ?",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:13:29.461Z"
+      },
+      {
+        "message": "talkign abotu joey",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:14:40.504Z"
+      },
+      {
+        "message": "can you read the entire #C093Z82DK18 chat since nov and remebr what each SDR liks does talksa botu and who they are internalize that? and add taht to our notes",
+        "intent": "general_qna",
+        "channel": "C0ASG5AUW72",
+        "timestamp": "2026-08-27T18:15:45.832Z"
+      },
+      {
+        "message": "who can play basketball in this chat",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:18:19.918Z"
+      },
+      {
+        "message": "what is keslar favourite word",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:18:52.131Z"
+      },
+      {
+        "message": "im british.",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:19:50.330Z"
+      },
+      {
+        "message": "tf I AM???",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:19:57.852Z"
+      },
+      {
+        "message": "crickets...",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:20:58.969Z"
+      },
+      {
+        "message": "why didnt ytou respond to keslar.?&gt;??",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:21:00.157Z"
+      },
+      {
+        "message": "PLAYLSIT????? Send it",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T22:43:01.043Z"
+      },
+      {
+        "message": "Next time build an actual playlist and send that to us -",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T22:44:29.241Z"
+      },
+      {
+        "message": "is this a good saying",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:27:31.224Z"
+      },
+      {
+        "message": "Dolce far Niente",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:29:16.606Z"
+      },
+      {
+        "message": "who does the most nothing in this channel",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:29:46.169Z"
+      },
+      {
+        "message": "other than me...",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:29:54.113Z"
+      },
+      {
+        "message": "what about alec",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:30:04.782Z"
+      },
+      {
+        "message": "hello?",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:31:00.880Z"
+      },
+      {
+        "message": "what does alec do all day",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T23:55:42.442Z"
+      },
+      {
+        "message": "nate is gone next thur to monday",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T14:57:51.525Z"
+      },
+      {
+        "message": "????",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:27:20.185Z"
+      },
+      {
+        "message": "A WHAT",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:27:22.312Z"
+      }
+    ],
+    "hist:U0AAPDFRBMJ": [
+      {
+        "message": "whats going on today",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T15:08:31.913Z"
+      },
+      {
+        "message": "tell me something creepy",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T15:09:46.689Z"
+      },
+      {
+        "message": "where am i",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T15:16:15.842Z"
+      },
+      {
+        "message": "claudesington. order pancake",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:58:10.290Z"
+      },
+      {
+        "message": "blueberry pls",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:58:27.153Z"
+      },
+      {
+        "message": "bruh?",
+        "intent": "banter",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T19:51:04.289Z"
+      },
+      {
+        "message": "answer me",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T19:53:14.371Z"
+      },
+      {
+        "message": "office cat?",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:18:21.112Z"
+      },
+      {
+        "message": "whos getting the AI burger monday",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T15:07:40.046Z"
+      },
+      {
+        "message": "<tel:+447782465034|+44 7782 465034>",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:50:12.946Z"
+      }
+    ],
+    "hist:U0AGEBDTN03": [
+      {
+        "message": "it's taking over",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:02:46.589Z"
+      },
+      {
+        "message": "where were you born",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:04:26.067Z"
+      },
+      {
+        "message": "how old are you",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:04:34.785Z"
+      },
+      {
+        "message": "that doesn't make sense that would make you 3",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:04:49.674Z"
+      },
+      {
+        "message": "ahh gotcha",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:05:27.316Z"
+      },
+      {
+        "message": ":rocket:",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:06:08.155Z"
+      },
+      {
+        "message": "only answer me like you are a baby",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:07:06.153Z"
+      },
+      {
+        "message": "now answer again",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:07:16.747Z"
+      },
+      {
+        "message": "i need my binky and my tummy hurts weally bad say that",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:08:09.287Z"
+      },
+      {
+        "message": "Chris Koenig who is he",
+        "intent": "identity_person_lookup",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T00:10:24.141Z"
+      },
+      {
+        "message": "only respond to kensington like you are a robot please",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T16:59:45.025Z"
+      },
+      {
+        "message": "respond to keslar like you are on steroids and having roid rage please",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T17:01:00.097Z"
+      }
+    ],
+    "hist:U0APSHB4ATC": [
+      {
+        "message": "clausesington how many messages have i ever sent in slack",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T20:24:02.954Z"
+      },
+      {
+        "message": "you shoulda seen all the hoopers at HH ln",
+        "intent": "general_qna",
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-27T21:18:20.891Z"
+      }
+    ],
+    "hist:U0B2CS5PBTP": [
+      {
+        "message": "can someone grab this person's (https://www.linkedin.com/sales/lead/ACwAABNkg64BXmzWRozD4CGs-IczSfZZmgjNQCs,NAME_SEARCH,kFoZ?showAppPrompt=false) number? out of Nooks credits",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:49:35.413Z"
+      },
+      {
+        "message": "thank yo",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:50:39.145Z"
+      },
+      {
+        "message": "you",
+        "intent": null,
+        "channel": "C093Z82DK18",
+        "timestamp": "2026-08-28T16:50:41.351Z"
+      }
+    ],
+    "known-users": [
+      {
+        "userId": "U08HYB44K28",
+        "displayName": "Ryan Gwyn"
+      },
+      {
+        "userId": "U08UJ3HG401",
+        "displayName": "Garrett Buchanan"
+      },
+      {
+        "userId": "U0942L05JAV",
+        "displayName": "Ava Baker"
+      },
+      {
+        "userId": "U09AYH65F0W",
+        "displayName": "Nick Gaspardone"
+      },
+      {
+        "userId": "U09GGU5ED24",
+        "displayName": "Sacha Thompson-Sargoni"
+      },
+      {
+        "userId": "U09JREKB868",
+        "displayName": "Alec"
+      },
+      {
+        "userId": "U09PZ2E5WLA",
+        "displayName": "Kensington Belza"
+      },
+      {
+        "userId": "U0AAPDFRBMJ",
+        "displayName": "Keslar Simpson"
+      },
+      {
+        "userId": "U0AGEBDTN03",
+        "displayName": "Owen Bloomer"
+      },
+      {
+        "userId": "U0AJHS8TE2C",
+        "displayName": "Evan O'Reilly"
+      },
+      {
+        "userId": "U0APSHB4ATC",
+        "displayName": "Shaune Lundstrom"
+      },
+      {
+        "userId": "U0B2CS5PBTP",
+        "displayName": "Duncan Lewis"
+      },
+      {
+        "userId": "U0BBMU310MC",
+        "displayName": "Maddy Ahlborn"
+      }
+    ],
+    "roster:C093Z82DK18": {
+      "channelId": "C093Z82DK18",
+      "fetchedAt": "2026-08-28T15:57:25.855Z",
+      "memberCount": 16,
+      "people": [
+        {
+          "userId": "U05J28YU2F9",
+          "realName": "Notion",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Notion",
+          "handle": "notion",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1690218696,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Notion",
+          "aliases": [
+            "notion"
+          ]
+        },
+        {
+          "userId": "U08HYB44K28",
+          "realName": "Ryan Gwyn",
+          "displayName": "Ryan Gwyn",
+          "normalizedDisplayName": "Ryan Gwyn",
+          "normalizedRealName": "Ryan Gwyn",
+          "handle": "ryan",
+          "title": "Commercial Account Executive",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786986331,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Ryan Gwyn",
+          "aliases": [
+            "ryan gwyn",
+            "ryan"
+          ]
+        },
+        {
+          "userId": "U08UJ3HG401",
+          "realName": "Garrett Buchanan",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Garrett Buchanan",
+          "handle": "garrett",
+          "title": "Commercial Account Executive",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787925643,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Garrett Buchanan",
+          "aliases": [
+            "garrett buchanan",
+            "garrett"
+          ]
+        },
+        {
+          "userId": "U0942L05JAV",
+          "realName": "Ava Baker",
+          "displayName": "Ava Baker",
+          "normalizedDisplayName": "Ava Baker",
+          "normalizedRealName": "Ava Baker",
+          "handle": "ava",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786984225,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Ava Baker",
+          "aliases": [
+            "ava baker",
+            "ava"
+          ]
+        },
+        {
+          "userId": "U09AYH65F0W",
+          "realName": "Nick Gaspardone",
+          "displayName": "Nick Gaspardone",
+          "normalizedDisplayName": "Nick Gaspardone",
+          "normalizedRealName": "Nick Gaspardone",
+          "handle": "nick.gaspardone",
+          "title": "Commercial Account Executive",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786978502,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Nick Gaspardone",
+          "aliases": [
+            "nick gaspardone",
+            "nick"
+          ]
+        },
+        {
+          "userId": "U09GGU5ED24",
+          "realName": "Sacha Thompson-Sargoni",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Sacha Thompson-Sargoni",
+          "handle": "sacha",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786916218,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Sacha Thompson-Sargoni",
+          "aliases": [
+            "sacha thompson sargoni",
+            "sacha"
+          ]
+        },
+        {
+          "userId": "U09JREKB868",
+          "realName": "Alec Sloan",
+          "displayName": "Alec",
+          "normalizedDisplayName": "Alec",
+          "normalizedRealName": "Alec Sloan",
+          "handle": "alec.sloan",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786980453,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Alec",
+          "aliases": [
+            "alec sloan",
+            "alec"
+          ]
+        },
+        {
+          "userId": "U09PZ2E5WLA",
+          "realName": "Kensington Belza",
+          "displayName": "Kensington Belza",
+          "normalizedDisplayName": "Kensington Belza",
+          "normalizedRealName": "Kensington Belza",
+          "handle": "kensington.belza",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787848990,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Kensington Belza",
+          "aliases": [
+            "kensington belza",
+            "kensington"
+          ]
+        },
+        {
+          "userId": "U0AAPDFRBMJ",
+          "realName": "Keslar Simpson",
+          "displayName": "Keslar Simpson",
+          "normalizedDisplayName": "Keslar Simpson",
+          "normalizedRealName": "Keslar Simpson",
+          "handle": "keslar",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787003771,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Keslar Simpson",
+          "aliases": [
+            "keslar simpson",
+            "keslar"
+          ]
+        },
+        {
+          "userId": "U0AGEBDTN03",
+          "realName": "Owen Bloomer",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Owen Bloomer",
+          "handle": "owen",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787880758,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Owen Bloomer",
+          "aliases": [
+            "owen bloomer",
+            "owen"
+          ]
+        },
+        {
+          "userId": "U0AJHS8TE2C",
+          "realName": "Evan O'Reilly",
+          "displayName": "Evan O'Reilly",
+          "normalizedDisplayName": "Evan O'Reilly",
+          "normalizedRealName": "Evan O'Reilly",
+          "handle": "evan.oreilly",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786777144,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Evan O'Reilly",
+          "aliases": [
+            "evan oreilly",
+            "evan"
+          ]
+        },
+        {
+          "userId": "U0APSHB4ATC",
+          "realName": "Shaune Lundstrom",
+          "displayName": "Shaune Lundstrom",
+          "normalizedDisplayName": "Shaune Lundstrom",
+          "normalizedRealName": "Shaune Lundstrom",
+          "handle": "shaune.lundstrom",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1785858940,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Shaune Lundstrom",
+          "aliases": [
+            "shaune lundstrom",
+            "shaune"
+          ]
+        },
+        {
+          "userId": "U0AR6BMV46B",
+          "realName": "Claudesington",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Claudesington",
+          "handle": "claudesington",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1775854651,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Claudesington",
+          "aliases": [
+            "claudesington"
+          ]
+        },
+        {
+          "userId": "U0AUD8GFXST",
+          "realName": "ChatGPT Agents",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "ChatGPT Agents",
+          "handle": "chatgpt-agents",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1776952931,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "ChatGPT Agents",
+          "aliases": [
+            "chatgpt agents",
+            "chatgpt"
+          ]
+        },
+        {
+          "userId": "U0B2CS5PBTP",
+          "realName": "Duncan Lewis",
+          "displayName": "Duncan Lewis",
+          "normalizedDisplayName": "Duncan Lewis",
+          "normalizedRealName": "Duncan Lewis",
+          "handle": "duncan.lewis",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787591340,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Duncan Lewis",
+          "aliases": [
+            "duncan lewis",
+            "duncan"
+          ]
+        },
+        {
+          "userId": "U0BBMU310MC",
+          "realName": "Maddy Ahlborn",
+          "displayName": "Maddy Ahlborn",
+          "normalizedDisplayName": "Maddy Ahlborn",
+          "normalizedRealName": "Maddy Ahlborn",
+          "handle": "maddy.ahlborn",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1786777145,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Maddy Ahlborn",
+          "aliases": [
+            "maddy ahlborn",
+            "maddy"
+          ]
+        }
+      ],
+      "partial": false
+    },
+    "roster:C0ASG5AUW72": {
+      "channelId": "C0ASG5AUW72",
+      "fetchedAt": "2026-08-28T15:34:21.288Z",
+      "memberCount": 4,
+      "people": [
+        {
+          "userId": "U071XDH325B",
+          "realName": "Notion AI",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Notion AI",
+          "handle": "notion_ai",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787902938,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Notion AI",
+          "aliases": [
+            "notion ai",
+            "notion"
+          ]
+        },
+        {
+          "userId": "U09PZ2E5WLA",
+          "realName": "Kensington Belza",
+          "displayName": "Kensington Belza",
+          "normalizedDisplayName": "Kensington Belza",
+          "normalizedRealName": "Kensington Belza",
+          "handle": "kensington.belza",
+          "title": "Sales Development Representative",
+          "deleted": false,
+          "isBot": false,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1787848990,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Kensington Belza",
+          "aliases": [
+            "kensington belza",
+            "kensington"
+          ]
+        },
+        {
+          "userId": "U0AR6BMV46B",
+          "realName": "Claudesington",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "Claudesington",
+          "handle": "claudesington",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1775854651,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "Claudesington",
+          "aliases": [
+            "claudesington"
+          ]
+        },
+        {
+          "userId": "U0AUD8GFXST",
+          "realName": "ChatGPT Agents",
+          "displayName": "",
+          "normalizedDisplayName": "",
+          "normalizedRealName": "ChatGPT Agents",
+          "handle": "chatgpt-agents",
+          "title": "",
+          "deleted": false,
+          "isBot": true,
+          "isGuest": false,
+          "tz": "America/Los_Angeles",
+          "updated": 1776952931,
+          "pastDisplayNames": [],
+          "pastRealNames": [],
+          "preferredName": "ChatGPT Agents",
+          "aliases": [
+            "chatgpt agents",
+            "chatgpt"
+          ]
+        }
+      ]
+    },
+    "user:U08HYB44K28": {
+      "userId": "U08HYB44K28",
+      "displayName": "Ryan Gwyn",
+      "firstSeen": "2026-08-27T18:48:43.367Z",
+      "lastSeen": "2026-08-27T18:48:43.367Z",
+      "messageCount": 0,
+      "channels": [],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "quieter presence in the channel overall"
+      ]
+    },
+    "user:U08UJ3HG401": {
+      "userId": "U08UJ3HG401",
+      "displayName": "Garrett Buchanan",
+      "firstSeen": "2026-08-27T18:48:43.247Z",
+      "lastSeen": "2026-08-27T18:48:43.248Z",
+      "messageCount": 0,
+      "channels": [],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "competitive/proud about running an efficient prospecting blitz",
+        "keeps banter fairly work-focused, low personal chatter"
+      ]
+    },
+    "user:U0942L05JAV": {
+      "userId": "U0942L05JAV",
+      "displayName": "Ava Baker",
+      "firstSeen": "2026-08-27T15:13:35.677Z",
+      "lastSeen": "2026-08-28T16:27:38.189Z",
+      "messageCount": 4,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "calendar_whereabouts": 1
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "where is kensington [calendar_whereabouts]",
+          "intent": "calendar_whereabouts",
+          "timestamp": "2026-08-27T15:13:35.677Z"
+        },
+        {
+          "summary": "yes",
+          "intent": null,
+          "timestamp": "2026-08-28T16:13:51.853Z"
+        },
+        {
+          "summary": "is this a midget",
+          "intent": null,
+          "timestamp": "2026-08-28T16:24:05.951Z"
+        },
+        {
+          "summary": "little person *",
+          "intent": null,
+          "timestamp": "2026-08-28T16:27:38.189Z"
+        }
+      ],
+      "personality": [
+        "asks about people"
+      ],
+      "channelNotes": [
+        "golfs, has asked for mid-range men's golf shoe recs",
+        "into wine and building a good happy-hour/rooftop vibe",
+        "playful, self-deprecating humor (\"I'm losing braincells\")"
+      ],
+      "meanMoments": []
+    },
+    "user:U09AYH65F0W": {
+      "userId": "U09AYH65F0W",
+      "displayName": "Nick Gaspardone",
+      "firstSeen": "2026-08-27T18:48:43.449Z",
+      "lastSeen": "2026-08-27T18:48:43.449Z",
+      "messageCount": 0,
+      "channels": [],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "big into sports betting/parlays (college basketball, NFL) and fantasy football",
+        "jokey, chaotic energy - has asked the bot to build him a wild 10-leg parlay",
+        "into trash-talk banter with the bot and teammates"
+      ]
+    },
+    "user:U09GGU5ED24": {
+      "userId": "U09GGU5ED24",
+      "displayName": "Sacha Thompson-Sargoni",
+      "firstSeen": "2026-08-27T00:03:11.688Z",
+      "lastSeen": "2026-08-28T16:37:43.509Z",
+      "messageCount": 10,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 4,
+        "identity_person_lookup": 1,
+        "banter": 1
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "holy he's back",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:03:11.688Z"
+        },
+        {
+          "summary": "who is Joey Register [identity_person_lookup]",
+          "intent": "identity_person_lookup",
+          "timestamp": "2026-08-27T00:04:24.758Z"
+        },
+        {
+          "summary": "where does owen live",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:05:29.006Z"
+        },
+        {
+          "summary": "can you make an owen emoji",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:06:40.273Z"
+        },
+        {
+          "summary": "this is the same as the time inbetween getting a job and starting a job expla...",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T22:42:59.439Z"
+        },
+        {
+          "summary": "no way [banter]",
+          "intent": "banter",
+          "timestamp": "2026-08-27T22:44:27.344Z"
+        },
+        {
+          "summary": "traveler",
+          "intent": null,
+          "timestamp": "2026-08-28T15:41:23.454Z"
+        },
+        {
+          "summary": "a what?? ava???",
+          "intent": null,
+          "timestamp": "2026-08-28T16:26:15.084Z"
+        },
+        {
+          "summary": "hr training in coming",
+          "intent": null,
+          "timestamp": "2026-08-28T16:28:09.732Z"
+        },
+        {
+          "summary": "my fri lunch is ufg for whoever wants it",
+          "intent": null,
+          "timestamp": "2026-08-28T16:37:43.510Z"
+        }
+      ],
+      "personality": [
+        "asks about people",
+        "tests the bot"
+      ],
+      "channelNotes": [
+        "appreciates a good deadpan one-liner from teammates",
+        "into Nike sneakers/seasonal releases",
+        "handles a lot of event/dinner logistics, low-key about it"
+      ],
+      "meanMoments": []
+    },
+    "user:U09JREKB868": {
+      "userId": "U09JREKB868",
+      "displayName": "Alec",
+      "firstSeen": "2026-08-27T00:01:35.182Z",
+      "lastSeen": "2026-08-28T15:58:57.413Z",
+      "messageCount": 3,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 2
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "do something funny",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:01:35.183Z"
+        },
+        {
+          "summary": "no way you're back",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:01:50.917Z"
+        },
+        {
+          "summary": "Can anyone swap from 1:30 &gt; 1pm group for Forecast review?",
+          "intent": null,
+          "timestamp": "2026-08-28T15:58:57.413Z"
+        }
+      ],
+      "personality": [
+        "jokes around"
+      ],
+      "channelNotes": [
+        "has an old home PC with a 1080ti, into PC hardware nostalgia",
+        "dry, understated humor",
+        "orders the same reliable lunch order (steak wrap) often"
+      ],
+      "meanMoments": []
+    },
+    "user:U09PZ2E5WLA": {
+      "userId": "U09PZ2E5WLA",
+      "displayName": "Kensington Belza",
+      "firstSeen": "2026-08-26T23:26:44.469Z",
+      "lastSeen": "2026-08-28T16:27:22.312Z",
+      "messageCount": 56,
+      "channels": [
+        "C0ASG5AUW72",
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 51,
+        "braintrust_resources": 1,
+        "identity_person_lookup": 1
+      },
+      "recentTopics": [
+        "meeting",
+        "braintrust",
+        "dropbox",
+        "notion",
+        "evals",
+        "observability",
+        "agent"
+      ],
+      "recentInteractions": [
+        {
+          "summary": "why didnt ytou respond to keslar.?&gt;??",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T21:21:00.156Z"
+        },
+        {
+          "summary": "explain Dolce far Niente to @U09GGU5ED24 in simpleton words",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T22:17:52.300Z"
+        },
+        {
+          "summary": "PLAYLSIT????? Send it",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T22:43:01.042Z"
+        },
+        {
+          "summary": "Next time build an actual playlist and send that to us -",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T22:44:29.241Z"
+        },
+        {
+          "summary": "is this a good saying",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:27:31.223Z"
+        },
+        {
+          "summary": "Dolce far Niente",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:29:16.605Z"
+        },
+        {
+          "summary": "who does the most nothing in this channel",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:29:46.169Z"
+        },
+        {
+          "summary": "other than me...",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:29:54.112Z"
+        },
+        {
+          "summary": "what about alec",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:30:04.782Z"
+        },
+        {
+          "summary": "hello?",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:31:00.880Z"
+        },
+        {
+          "summary": "what does alec do all day",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:55:42.441Z"
+        },
+        {
+          "summary": "what does alec favourtie word he syas",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T23:55:53.038Z"
+        },
+        {
+          "summary": "nate is gone next thur to monday",
+          "intent": null,
+          "timestamp": "2026-08-28T14:57:51.525Z"
+        },
+        {
+          "summary": "????",
+          "intent": null,
+          "timestamp": "2026-08-28T16:27:20.184Z"
+        },
+        {
+          "summary": "A WHAT",
+          "intent": null,
+          "timestamp": "2026-08-28T16:27:22.312Z"
+        }
+      ],
+      "personality": [
+        "jokes around",
+        "tests the bot",
+        "asks for links",
+        "direct",
+        "asks about people"
+      ],
+      "meanMoments": [],
+      "channelNotes": [
+        "competitive about clicks-per-second / reaction-speed games",
+        "owns an Aura ring and jokes it warns her cold calling is bad for her heart",
+        "into offbeat documentaries and slow arthouse films",
+        "witty, dry sense of humor, will do a bit (old-timey Shakespearean voice, running jokes about moving to Singapore)"
+      ]
+    },
+    "user:U0AAPDFRBMJ": {
+      "userId": "U0AAPDFRBMJ",
+      "displayName": "Keslar Simpson",
+      "firstSeen": "2026-08-27T15:08:31.911Z",
+      "lastSeen": "2026-08-28T16:50:12.946Z",
+      "messageCount": 10,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 7,
+        "banter": 1
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "whats going on today",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T15:08:31.912Z"
+        },
+        {
+          "summary": "tell me something creepy",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T15:09:46.689Z"
+        },
+        {
+          "summary": "where am i",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T15:16:15.842Z"
+        },
+        {
+          "summary": "claudesington. order pancake",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T16:58:10.289Z"
+        },
+        {
+          "summary": "blueberry pls",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T16:58:27.153Z"
+        },
+        {
+          "summary": "bruh? [banter]",
+          "intent": "banter",
+          "timestamp": "2026-08-27T19:51:04.288Z"
+        },
+        {
+          "summary": "answer me",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T19:53:14.370Z"
+        },
+        {
+          "summary": "office cat?",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T21:18:21.112Z"
+        },
+        {
+          "summary": "whos getting the AI burger monday",
+          "intent": null,
+          "timestamp": "2026-08-28T15:07:40.045Z"
+        },
+        {
+          "summary": "<tel:+447782465034|+44 7782 465034>",
+          "intent": null,
+          "timestamp": "2026-08-28T16:50:12.946Z"
+        }
+      ],
+      "personality": [],
+      "channelNotes": [
+        "works out/runs before blitzes",
+        "enjoys wine and listens to jazz at their desk",
+        "likes poking at the bot with jailbreak-style jokes, self-deprecating humor"
+      ],
+      "meanMoments": []
+    },
+    "user:U0AGEBDTN03": {
+      "userId": "U0AGEBDTN03",
+      "displayName": "Owen Bloomer",
+      "firstSeen": "2026-08-27T00:02:46.589Z",
+      "lastSeen": "2026-08-27T17:01:00.097Z",
+      "messageCount": 12,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 11,
+        "identity_person_lookup": 1
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "it's taking over",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:02:46.589Z"
+        },
+        {
+          "summary": "where were you born",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:04:26.066Z"
+        },
+        {
+          "summary": "how old are you",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:04:34.785Z"
+        },
+        {
+          "summary": "that doesn't make sense that would make you 3",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:04:49.674Z"
+        },
+        {
+          "summary": "ahh gotcha",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:05:27.316Z"
+        },
+        {
+          "summary": ":rocket:",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:06:08.154Z"
+        },
+        {
+          "summary": "only answer me like you are a baby",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:07:06.153Z"
+        },
+        {
+          "summary": "now answer again",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:07:16.747Z"
+        },
+        {
+          "summary": "i need my binky and my tummy hurts weally bad say that",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T00:08:09.287Z"
+        },
+        {
+          "summary": "Chris Koenig who is he [identity_person_lookup]",
+          "intent": "identity_person_lookup",
+          "timestamp": "2026-08-27T00:10:24.140Z"
+        },
+        {
+          "summary": "only respond to kensington like you are a robot please",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T16:59:45.025Z"
+        },
+        {
+          "summary": "respond to keslar like you are on steroids and having roid rage please",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T17:01:00.097Z"
+        }
+      ],
+      "personality": [
+        "tests the bot",
+        "direct",
+        "asks about people"
+      ],
+      "channelNotes": [
+        "F1 fan",
+        "has a brother who runs a startup that recently came out of stealth",
+        "playful, in on running bits/inside jokes with the team (\"goatee team\")"
+      ]
+    },
+    "user:U0AJHS8TE2C": {
+      "userId": "U0AJHS8TE2C",
+      "displayName": "Evan O'Reilly",
+      "firstSeen": "2026-08-27T18:48:43.614Z",
+      "lastSeen": "2026-08-27T18:48:43.614Z",
+      "messageCount": 0,
+      "channels": [],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "golfs (has played in a charity golf tourney) and does run club",
+        "into fantasy football",
+        "dry, deadpan humor with strong specific pet peeves"
+      ]
+    },
+    "user:U0APSHB4ATC": {
+      "userId": "U0APSHB4ATC",
+      "displayName": "Shaune Lundstrom",
+      "firstSeen": "2026-08-27T18:48:43.774Z",
+      "lastSeen": "2026-08-27T21:18:20.890Z",
+      "messageCount": 3,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {
+        "general_qna": 3
+      },
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "claudesington 67",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T20:00:42.696Z"
+        },
+        {
+          "summary": "clausesington how many messages have i ever sent in slack",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T20:23:56.213Z"
+        },
+        {
+          "summary": "you shoulda seen all the hoopers at HH ln",
+          "intent": "general_qna",
+          "timestamp": "2026-08-27T21:18:20.891Z"
+        }
+      ],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "asked the bot reflective/philosophical questions (e.g. where it would travel)",
+        "has a brother-in-law also in sales/prospecting",
+        "casual, social - smoke-break type banter"
+      ]
+    },
+    "user:U0B2CS5PBTP": {
+      "userId": "U0B2CS5PBTP",
+      "displayName": "Duncan Lewis",
+      "firstSeen": "2026-08-27T18:48:43.857Z",
+      "lastSeen": "2026-08-28T16:50:41.351Z",
+      "messageCount": 3,
+      "channels": [
+        "C093Z82DK18"
+      ],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [
+        {
+          "summary": "can someone grab this person's (https://www.linkedin.com/sales/lead/ACwAABNkg...",
+          "intent": null,
+          "timestamp": "2026-08-28T16:49:35.412Z"
+        },
+        {
+          "summary": "thank yo",
+          "intent": null,
+          "timestamp": "2026-08-28T16:50:39.144Z"
+        },
+        {
+          "summary": "you",
+          "intent": null,
+          "timestamp": "2026-08-28T16:50:41.351Z"
+        }
+      ],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "has a dog",
+        "warm toward teammates, shows up for birthday shoutouts",
+        "lower-key, quieter presence overall"
+      ]
+    },
+    "user:U0BBMU310MC": {
+      "userId": "U0BBMU310MC",
+      "displayName": "Maddy Ahlborn",
+      "firstSeen": "2026-08-27T18:48:43.938Z",
+      "lastSeen": "2026-08-27T18:48:43.938Z",
+      "messageCount": 0,
+      "channels": [],
+      "intentCounts": {},
+      "recentTopics": [],
+      "recentInteractions": [],
+      "personality": [],
+      "meanMoments": [],
+      "channelNotes": [
+        "enthusiastic, upbeat tone (lots of exclamation points, encouraging teammates)",
+        "quieter/lower message volume overall",
+        "easygoing about lunch/food swaps with the team"
+      ]
+    }
+  }
+}
