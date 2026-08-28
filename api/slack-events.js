@@ -2,7 +2,7 @@ import { waitUntil } from '@vercel/functions';
 import getRawBody from 'raw-body';
 import { verifySlackSignature, postToSlack, resolveUser, fetchThreadMessages } from '../lib/slack.js';
 import { detectTrigger, isBotInThread, isAddressedToOtherUser } from '../lib/trigger.js';
-import { isDuplicate } from '../lib/dedup.js';
+import { claimEvent } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal, wantsMarketingEvents } from '../lib/intent.js';
 import { getCapabilities, capabilitySummary } from '../lib/capabilities.js';
@@ -111,20 +111,25 @@ async function processEventInner(body, background) {
   // Guard: never reply to bot messages (prevents loops)
   if (event.bot_id || event.subtype === 'bot_message') return;
 
-  // --- DUPLICATE-EVENT FIX ---
   const botUserId = process.env.SLACK_BOT_USER_ID || '';
-  if (
-    event.type === 'message' &&
-    botUserId &&
-    new RegExp(`<@${botUserId}>`).test(event.text)
-  ) {
-    console.log('skip: message event deferred to app_mention handler');
-    return;
-  }
 
-  // Guard: deduplicate within warm instances
-  if (isDuplicate(event)) {
-    console.log(`dedup: skipping duplicate event ${event.channel}:${event.ts}`);
+  // --- DUPLICATE-EVENT HANDLING ---
+  //
+  // Slack sends one @mention as BOTH app_mention and message. This used to
+  // resolve that by unconditionally skipping every `message` event containing
+  // the bot's mention, betting app_mention would always arrive.
+  //
+  // That bet failed silently in production: plain messages kept being
+  // processed (ambient logging worked fine) while EVERY @mention produced no
+  // reply, no filler and no relay request for ~22 hours. The skip path logs
+  // like normal operation, so nothing indicated the bot had gone mute to
+  // anyone addressing it directly.
+  //
+  // Now: both event types share the same channel + ts + user, so a single
+  // atomic KV claim covers them. Whichever arrives first wins; the other is
+  // dropped. See lib/dedup.js.
+  if (!(await claimEvent(event))) {
+    console.log(`dedup: ${event.type} already claimed for ${event.channel}:${event.ts}`);
     return;
   }
 

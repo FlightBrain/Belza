@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isDuplicate, _resetDedup } from '../lib/dedup.js';
+import { isDuplicate, claimEvent, _resetDedup } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal } from '../lib/intent.js';
 import { detectTrigger, isBotInThread } from '../lib/trigger.js';
@@ -4153,5 +4153,56 @@ describe('J-F: pronouns are a fact, never a guess', () => {
     const prompt = buildSystemPrompt({ capabilities: '', intent: 'general_qna', threadContext: '' });
     assert.match(prompt, /pronouns are a FACT, not a guess/);
     assert.match(prompt, /never infer gender from a name/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dedup: the app_mention outage
+// ---------------------------------------------------------------------------
+
+describe('claimEvent: one human message, two Slack events', () => {
+  beforeEach(() => _resetDedup());
+
+  // Slack delivers a single @mention as BOTH app_mention and message. The old
+  // handler unconditionally skipped the `message` copy, betting app_mention
+  // would always arrive. In production that bet failed and the bot went mute
+  // to every direct address for ~22 hours while ambient logging kept working,
+  // because the skip path logs like normal operation.
+  const pair = (ts) => {
+    const base = { channel: 'C1', ts, user: 'U1', text: '<@UBOT> hi' };
+    return [{ ...base, type: 'app_mention' }, { ...base, type: 'message' }];
+  };
+
+  it('lets the first arrival through and drops the second', async () => {
+    const [mention, message] = pair('1.1');
+    assert.equal(await claimEvent(mention), true);
+    assert.equal(await claimEvent(message), false);
+  });
+
+  it('works in either arrival order', async () => {
+    const [mention, message] = pair('2.2');
+    assert.equal(await claimEvent(message), true);
+    assert.equal(await claimEvent(mention), false);
+  });
+
+  it('keys on channel+ts+user, NOT on event type', async () => {
+    // If the key included the type, both events would be processed and the bot
+    // would reply twice to every mention.
+    const [mention, message] = pair('3.3');
+    await claimEvent(mention);
+    assert.equal(await claimEvent(message), false);
+  });
+
+  it('does not confuse different messages', async () => {
+    const [a] = pair('4.4');
+    const [b] = pair('5.5');
+    assert.equal(await claimEvent(a), true);
+    assert.equal(await claimEvent(b), true);
+  });
+
+  it('treats a missing user as part of the key without throwing', async () => {
+    const e = { channel: 'C1', ts: '6.6', type: 'message', text: 'x' };
+    assert.equal(await claimEvent(e), true);
+    assert.equal(await claimEvent(e), false);
   });
 });
