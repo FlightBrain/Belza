@@ -11,15 +11,17 @@ export default async function handler(req, res) {
     return res.status(401).end();
   }
 
-  const [notionContext, calendarContext] = await Promise.all([
+  // Both of these return { text, retrieval }, not a bare string. Passing the
+  // object straight through interpolated "[object Object]" into the prompt.
+  const [notionResult, calendarResult] = await Promise.all([
     fetchContext(),
     fetchCalendarContext(),
   ]);
 
   const caps = getCapabilities();
   const systemPrompt = buildSystemPrompt({
-    notionContext,
-    calendarContext,
+    notionContext: notionResult?.text,
+    calendarContext: calendarResult?.text,
     capabilities: capabilitySummary(caps),
     intent: 'general_qna',
     threadContext: '',
@@ -27,7 +29,11 @@ export default async function handler(req, res) {
 
   const prompt = 'give a brief 1-2 sentence end-of-day update based on the notion context. casual and helpful. if nothing notable is in the context, respond with exactly: [SKIP]';
 
-  const message = await callClaude(systemPrompt, prompt);
+  // callClaude returns { reply, model, tokens, latencyMs } - the old code
+  // compared the whole object against '[SKIP]' (never true) and posted the
+  // object as the message text.
+  const result = await callClaude(systemPrompt, prompt);
+  const message = result?.reply;
   if (!message || message === '[SKIP]') return res.status(200).end();
 
   await postToSlack({

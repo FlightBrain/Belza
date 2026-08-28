@@ -8,10 +8,6 @@
   },
   "crons": [
     {
-      "path": "/api/cron/task-reconciler",
-      "schedule": "0 16 * * 1-5"
-    },
-    {
       "path": "/api/cron/proactive-update",
       "schedule": "0 1 * * 2-6"
     },
