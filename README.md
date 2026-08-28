@@ -1,6 +1,8 @@
 # Claudesington - Braintrust SDR Slack Bot
 
-Slack bot for the Braintrust SDR team. Hangs out in team channels, answers questions, and relays knowledge requests to a Notion AI agent for grounded answers.
+Slack bot for the Braintrust SDR team. Hangs out in team channels, answers questions, and remembers the people in them.
+
+**Current reality check:** the Notion relay path is built but OFF (`RELAY_ENABLED=false`), so effectively every reply goes through the local Groq path. `NOTION_API_KEY` is currently invalid, so `lib/context.js` returns `[unavailable]`. Google Calendar is not configured.
 
 Deployed on Vercel at `claudesington.vercel.app`.
 
@@ -45,14 +47,18 @@ User @mentions bot in Slack
 | `lib/guardrails.js` | Post-processing: blocks forbidden phrases, strips em dashes. |
 | `lib/slack.js` | Slack API: post messages, fetch threads/history, resolve users, format mrkdwn. |
 | `lib/thread-context.js` | Builds conversation context from thread replies or channel history. |
-| `lib/claude.js` | Calls Claude Haiku for local responses. |
+| `lib/claude.js` | Calls Groq (`openai/gpt-oss-20b`) for local responses. Retries on 429 honoring Retry-After. Misnamed for history. |
 | `lib/context.js` | Fetches Notion page content (currently limited, pages may be empty). |
 | `lib/calendar.js` | Fetches Google Calendar events (needs env vars configured). |
 | `lib/capabilities.js` | Runtime capability detection (what sources are connected). |
+| `lib/roster.js` | Channel roster built from `conversations.members` + `users.info`. Lazy TTL-cached in KV. Source of truth for who exists. |
+| `lib/identity.js` | Resolves `<@U…>` tags and typed names to people. Tags first, names second, ambiguity asked not guessed. |
+| `lib/names.js` | Name normalization and alias building, shared by roster and resolver. |
 | `lib/user-profiles.js` | KV-backed per-user profiles: history, personality, channel notes, life events, known-users index. |
 | `lib/channel-log.js` | Channel-wide ambient message log (raw feed across everyone, mined by memory-distill). |
 | `scripts/memory-distill.js` | Daily GitHub Actions job: extracts life events + banter notes from new ambient messages. |
 | `prompts/system.js` | System prompt for local Claude path. Casual SDR teammate tone. |
+| `scripts/test-identity.js` | Phase 1 acceptance harness: every channel member by tag / first name / display name. Asserts pre-guardrails. |
 | `tests/unit.test.js` | Unit tests covering all modules. |
 
 ## Intent Routing
@@ -156,7 +162,7 @@ cd bot
 node --test tests/unit.test.js
 ```
 
-200 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims, user profiles, ambient channel logging, and memory distillation helpers.
+257 tests covering: dedup, parsing, intent, triggers, guardrails, slack formatting, system prompt, relay config, relay store, relay request/response, duplicate prevention, fallback behavior, identity claims, user profiles, ambient channel logging, memory distillation helpers, name normalization, roster shaping, and identity resolution.
 
 ## Deploying
 
@@ -188,3 +194,90 @@ git commit --allow-empty -m "redeploy" && git push origin main
 - [ ] Add scheduled auto-refresh of Notion content
 - [ ] Get Braintrust Notion API key for direct access (long-term fix)
 - [ ] Tune Notion agent speed (target <30s response time)
+
+## Identity Resolution (Phase 1)
+
+The bot resolves who someone is talking about in a fixed order. The order is
+the whole point: a tag is certain, a typed name is not, so the certain signal
+is consumed first.
+
+1. **Mention syntax, from RAW event text.** `<@U09GGU5ED24>` is matched to a
+   roster entry by exact user ID. No fuzzy matching is involved.
+2. **User groups and special mentions** (`<!subteam^S…>`, `<!here>`) are
+   recognized as groups, never mistaken for a person.
+3. **Typed names**, matched against roster aliases: real name, display name,
+   Slack handle, first-name tokens, and any former names seen on a previous
+   refresh.
+4. **Ambiguity is asked about, never guessed.** Two people matching "alec"
+   produces "which alec do you mean, ..." and no lookup.
+
+### Why this was broken before
+
+`lib/parse.js` rewrites `<@U09GGU5ED24>` to the literal string
+`@U09GGU5ED24`, because Slack does not include a `|label` in modern mention
+payloads. The old `findMentionedTeammates` then string-matched display names
+against that text, i.e. compared a user ID to a display name. A tagged person
+never resolved:
+
+```
+RAW    : <@U0AR6BMV46B> who is <@U09GGU5ED24>
+CLEANED: @U0AR6BMV46B who is @U09GGU5ED24
+MATCHED: (none)
+```
+
+`lib/guardrails.js` rewrites `/U[A-Z0-9]{8,12}/` to `"someone"` on the way
+out, so the failure was invisible in Slack. **Any test of identity must assert
+against `result.rawReply`, before guardrails run.**
+
+### Roster refresh
+
+Lazy, on demand, TTL-cached in KV (`roster:<channel>`, 6h). Deliberately not
+scheduled:
+
+- Vercel Hobby caps cron at once per day per job.
+- GitHub Actions schedules are unreliable here: `memory-distill` has fired
+  zero times, `feedback-watch` 3 times against a `*/15` cron.
+
+A fresh roster is one KV read. A stale one is served immediately while it
+refreshes behind the reply. Only a cold cache blocks. Identity always resolves
+against the team channel roster (merged with the current channel's, if
+different) so lookups still work in a DM.
+
+Manual override: `@claudesington refresh roster`.
+
+Optional event-driven invalidation is wired for `user_change`, `team_join`,
+`member_joined_channel`, and `member_left_channel`. These are no-ops unless
+the corresponding event subscriptions are enabled in the Slack app config.
+
+### Facts stored per person
+
+`userId`, `realName` (from `profile.real_name`, which is authoritative),
+`displayName`, normalized forms of both, `handle`, `title`, `deleted`,
+`isBot`, `isGuest`, `tz`, `updated`, `pastDisplayNames`, `pastRealNames`,
+`aliases`, `preferredName`.
+
+Two Slack API subtleties that are easy to get wrong and are load-bearing here:
+
+- **`is_app_user` does not mean "is an app."** It means "is an authorized user
+  of the calling app." Filtering bots on it drops real humans from the roster.
+  Only `is_bot` is used, plus `USLACKBOT` by ID (Slack documents `is_bot` as
+  false for Slackbot).
+- **`profile.real_name` beats top-level `real_name`.** Slack's own `users.list`
+  example ships them out of sync.
+
+### Known limits
+
+- Surname-only reference ("belza", "sloan") is intentionally not an alias.
+  Surnames collide with ordinary words far more than first names do.
+- Single-token aliases are filtered through a stopword list, so a display name
+  like "Big Al" does not make "big" resolve to a person.
+- Aliases shorter than 3 characters are dropped.
+
+## Groq rate limit
+
+The on-demand tier caps **tokens per minute at 8000**, and one reply costs
+roughly 2.5k. That is about **three bot replies per minute for the entire
+workspace**. `lib/claude.js` retries 429s honoring `Retry-After` (up to 3
+attempts, capped at 25s of waiting so the Vercel function budget survives).
+Beyond that the caller degrades to a graceful message. Upgrading the Groq tier
+is the real fix.

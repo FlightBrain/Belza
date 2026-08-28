@@ -48,6 +48,16 @@ import {
   resolveUserId,
   neutralizeDeparture,
 } from '../scripts/memory-distill.js';
+import { normalizeName, buildAliases, preferredName } from '../lib/names.js';
+import { buildPerson, humans } from '../lib/roster.js';
+import {
+  extractMentions,
+  substituteMentions,
+  resolvePeople,
+  resolveByName,
+  ambiguityPrompt,
+  identityToPromptContext,
+} from '../lib/identity.js';
 
 // ---------------------------------------------------------------------------
 // Dedup
@@ -1717,5 +1727,366 @@ describe('guardrails user ID stripping', () => {
   it('leaves normal text alone', () => {
     const result = applyGuardrails('hey whats up, nice to meet you');
     assert.equal(result, 'hey whats up, nice to meet you');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: name normalization
+// ---------------------------------------------------------------------------
+
+describe('normalizeName', () => {
+  it('converges a handle and a real name on the same string', () => {
+    assert.equal(normalizeName("Evan O'Reilly"), 'evan oreilly');
+    assert.equal(normalizeName('evan.oreilly'), 'evan oreilly');
+  });
+
+  it('splits hyphenated surnames into tokens', () => {
+    assert.equal(normalizeName('Sacha Thompson-Sargoni'), 'sacha thompson sargoni');
+  });
+
+  it('strips diacritics', () => {
+    assert.equal(normalizeName('José Ángel'), 'jose angel');
+  });
+
+  it('collapses whitespace and handles junk input', () => {
+    assert.equal(normalizeName('  Alec  '), 'alec');
+    assert.equal(normalizeName(''), '');
+    assert.equal(normalizeName(null), '');
+    assert.equal(normalizeName(undefined), '');
+    assert.equal(normalizeName(12345), '');
+  });
+});
+
+describe('buildAliases', () => {
+  it('includes full name, first name, display name and handle', () => {
+    const aliases = buildAliases({
+      realName: 'Kensington Belza',
+      displayName: 'Kensington Belza',
+      handle: 'kensington.belza',
+    });
+    assert.ok(aliases.includes('kensington belza'));
+    assert.ok(aliases.includes('kensington'));
+  });
+
+  it('matches a nickname-only display name AND the fuller handle name', () => {
+    // Real case: Alec Sloan's Slack display_name is just "Alec".
+    const aliases = buildAliases({
+      realName: 'Alec Sloan',
+      displayName: 'Alec',
+      handle: 'alec.sloan',
+    });
+    assert.ok(aliases.includes('alec'));
+    assert.ok(aliases.includes('alec sloan'));
+  });
+
+  it('does not turn a common word into a single-token alias', () => {
+    // "Big Al" must not make "big" resolve to a person.
+    const aliases = buildAliases({ realName: 'Big Al', displayName: 'Big Al', handle: 'big.al' });
+    assert.ok(!aliases.includes('big'));
+    assert.ok(aliases.includes('big al'));
+  });
+
+  it('keeps former names searchable after a rename', () => {
+    const aliases = buildAliases({
+      realName: 'Alec Sloan',
+      displayName: 'Big Al',
+      handle: 'alec.sloan',
+      pastDisplayNames: ['Alec'],
+    });
+    assert.ok(aliases.includes('alec'));
+    assert.ok(aliases.includes('big al'));
+  });
+
+  it('drops aliases below the minimum length', () => {
+    const aliases = buildAliases({ realName: 'Bo', displayName: '', handle: 'bo' });
+    assert.deepEqual(aliases, []);
+  });
+});
+
+describe('preferredName', () => {
+  it('prefers display name, then real name, then handle', () => {
+    assert.equal(preferredName({ displayName: 'Alec', realName: 'Alec Sloan', handle: 'alec.sloan' }), 'Alec');
+    // 3 of 13 humans in the real channel have an empty display_name.
+    assert.equal(preferredName({ displayName: '', realName: 'Owen Bloomer', handle: 'owen' }), 'Owen Bloomer');
+    assert.equal(preferredName({ displayName: '', realName: '', handle: 'owen' }), 'owen');
+    assert.equal(preferredName({ displayName: '', realName: '', handle: '', userId: 'U1' }), 'U1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: roster person shaping
+// ---------------------------------------------------------------------------
+
+describe('buildPerson', () => {
+  it('does NOT treat is_app_user as a bot signal', () => {
+    // is_app_user means "authorized user of the calling app", not "is an app".
+    // Filtering on it would drop real humans out of the roster.
+    const person = buildPerson({
+      id: 'U1', name: 'kensington.belza', is_bot: false, is_app_user: true,
+      profile: { display_name: 'Kensington Belza', real_name: 'Kensington Belza' },
+    });
+    assert.equal(person.isBot, false);
+  });
+
+  it('flags real bots', () => {
+    const person = buildPerson({ id: 'U2', name: 'notion', is_bot: true, profile: { real_name: 'Notion' } });
+    assert.equal(person.isBot, true);
+  });
+
+  it('flags Slackbot by ID, since is_bot is false for it', () => {
+    const person = buildPerson({ id: 'USLACKBOT', name: 'slackbot', is_bot: false, profile: { real_name: 'Slackbot' } });
+    assert.equal(person.isBot, true);
+  });
+
+  it('treats an absent deleted field as not deleted', () => {
+    const person = buildPerson({ id: 'U3', name: 'x', profile: { real_name: 'X Y' } });
+    assert.equal(person.deleted, false);
+  });
+
+  it('prefers profile.real_name over the top-level copy', () => {
+    // Slack's own users.list example ships these out of sync.
+    const person = buildPerson({
+      id: 'U4', name: 'spengler', real_name: 'spengler',
+      profile: { display_name: '', real_name: 'Egon Spengler' },
+    });
+    assert.equal(person.realName, 'Egon Spengler');
+    assert.ok(person.aliases.includes('egon'));
+  });
+
+  it('keeps guests as humans but records the flag', () => {
+    const person = buildPerson({ id: 'U5', name: 'c', is_restricted: true, profile: { real_name: 'Guest Person' } });
+    assert.equal(person.isBot, false);
+    assert.equal(person.isGuest, true);
+  });
+
+  it('records a former display name on rename, and clears it on rename back', () => {
+    const v1 = buildPerson({ id: 'U1', name: 'alec.sloan', profile: { display_name: 'Alec', real_name: 'Alec Sloan' } });
+    assert.deepEqual(v1.pastDisplayNames, []);
+
+    const v2 = buildPerson({ id: 'U1', name: 'alec.sloan', profile: { display_name: 'Big Al', real_name: 'Alec Sloan' } }, v1);
+    assert.deepEqual(v2.pastDisplayNames, ['Alec']);
+
+    const v3 = buildPerson({ id: 'U1', name: 'alec.sloan', profile: { display_name: 'Alec', real_name: 'Alec Sloan' } }, v2);
+    assert.deepEqual(v3.pastDisplayNames, ['Big Al']);
+  });
+});
+
+describe('humans', () => {
+  it('excludes bots and deactivated accounts', () => {
+    const roster = { people: [
+      buildPerson({ id: 'U1', name: 'a', is_bot: false, profile: { real_name: 'Real Person' } }),
+      buildPerson({ id: 'U2', name: 'b', is_bot: true, profile: { real_name: 'Some Bot' } }),
+      buildPerson({ id: 'U3', name: 'c', deleted: true, profile: { real_name: 'Gone Person' } }),
+    ] };
+    assert.deepEqual(humans(roster).map((p) => p.userId), ['U1']);
+  });
+
+  it('tolerates a null/empty roster', () => {
+    assert.deepEqual(humans(null), []);
+    assert.deepEqual(humans({}), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: identity resolution
+// ---------------------------------------------------------------------------
+
+const BOT_ID = 'U0AR6BMV46B';
+
+function testRoster() {
+  return { people: [
+    buildPerson({ id: 'UALEC001', name: 'alec.sloan', is_bot: false, profile: { display_name: 'Alec', real_name: 'Alec Sloan', title: 'SDR' } }),
+    buildPerson({ id: 'USACHA01', name: 'sacha', is_bot: false, profile: { display_name: '', real_name: 'Sacha Thompson-Sargoni', title: 'SDR' } }),
+    buildPerson({ id: 'UAVA0001', name: 'ava', is_bot: false, profile: { display_name: 'Ava Baker', real_name: 'Ava Baker', title: 'SDR' } }),
+    buildPerson({ id: 'UNOTION1', name: 'notion', is_bot: true, profile: { display_name: '', real_name: 'Notion' } }),
+    buildPerson({ id: BOT_ID, name: 'claudesington', is_bot: true, profile: { display_name: '', real_name: 'Claudesington' } }),
+  ] };
+}
+
+describe('extractMentions', () => {
+  it('pulls user IDs out of raw mention syntax', () => {
+    const m = extractMentions('<@UALEC001> and <@USACHA01> hi', BOT_ID);
+    assert.deepEqual(m.userIds, ['UALEC001', 'USACHA01']);
+  });
+
+  it('flags and excludes the bot own mention', () => {
+    const m = extractMentions(`<@${BOT_ID}> who is <@UALEC001>`, BOT_ID);
+    assert.equal(m.mentionsBot, true);
+    assert.deepEqual(m.userIds, ['UALEC001']);
+  });
+
+  it('tolerates the legacy pipe-label form', () => {
+    const m = extractMentions('<@UALEC001|alec> hi', BOT_ID);
+    assert.deepEqual(m.userIds, ['UALEC001']);
+  });
+
+  it('handles W-prefixed user IDs', () => {
+    const m = extractMentions('<@W012A3CDE> hi', BOT_ID);
+    assert.deepEqual(m.userIds, ['W012A3CDE']);
+  });
+
+  it('separates user groups and special mentions from people', () => {
+    const m = extractMentions('<!subteam^S123ABC|@sdr-team> and <!here> and <!channel>', BOT_ID);
+    assert.deepEqual(m.userIds, []);
+    assert.deepEqual(m.subteamIds, ['S123ABC']);
+    assert.deepEqual(m.subteamHandles, ['sdr-team']);
+    assert.deepEqual(m.specials, ['here', 'channel']);
+  });
+
+  it('deduplicates repeated mentions', () => {
+    const m = extractMentions('<@UALEC001> <@UALEC001>', BOT_ID);
+    assert.deepEqual(m.userIds, ['UALEC001']);
+  });
+});
+
+describe('substituteMentions', () => {
+  it('replaces a tag with the person real name, never a raw ID', () => {
+    const out = substituteMentions('who is <@USACHA01>', testRoster(), BOT_ID);
+    assert.equal(out, 'who is @Sacha Thompson-Sargoni');
+    assert.ok(!/USACHA01/.test(out));
+  });
+
+  it('removes the bot own mention entirely', () => {
+    const out = substituteMentions(`<@${BOT_ID}> hello`, testRoster(), BOT_ID);
+    assert.equal(out.trim(), 'hello');
+  });
+
+  it('does not leak an unknown user ID', () => {
+    const out = substituteMentions('who is <@UNOBODY1>', testRoster(), BOT_ID);
+    assert.ok(!/UNOBODY1/.test(out));
+    assert.ok(out.includes('@someone'));
+  });
+
+  it('renders a user group as a group, not a person', () => {
+    const out = substituteMentions('ping <!subteam^S1|@sdr-team>', testRoster(), BOT_ID);
+    assert.ok(out.includes('@sdr-team (group)'));
+  });
+});
+
+describe('resolvePeople', () => {
+  it('resolves a tagged person by exact ID', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is <@USACHA01>`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['USACHA01']);
+    assert.equal(r.people[0].via, 'tag');
+  });
+
+  it('resolves a first-name-only reference', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is sacha`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['USACHA01']);
+    assert.equal(r.people[0].via, 'name');
+  });
+
+  it('resolves a nickname-only display name', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['UALEC001']);
+  });
+
+  it('resolves the full real name when the display name is different', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is Alec Sloan`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['UALEC001']);
+  });
+
+  it('does not double-count a person who is both tagged and named', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> is <@UALEC001> the alec who likes wraps`, roster: testRoster(), botUserId: BOT_ID });
+    assert.equal(r.people.length, 1);
+    assert.equal(r.people[0].via, 'tag');
+  });
+
+  it('does not match a name inside a longer word', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> is anyone available thursday`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+  });
+
+  it('excludes the sender from name matches', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> what do you know about ava`, roster: testRoster(), botUserId: BOT_ID, excludeUserId: 'UAVA0001' });
+    assert.deepEqual(r.people, []);
+  });
+
+  it('reports an unknown tag instead of silently dropping it', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is <@UGHOST99>`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+    assert.deepEqual(r.unknownTags, ['UGHOST99']);
+  });
+
+  it('never name-matches a bot as a teammate', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> whats the notion pricing page`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+  });
+
+  it('resolves a tagged bot but marks it as a bot', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is <@UNOTION1>`, roster: testRoster(), botUserId: BOT_ID });
+    assert.deepEqual(r.people.map((p) => p.userId), ['UNOTION1']);
+    assert.equal(r.people[0].isBot, true);
+  });
+
+  it('tolerates a missing or empty roster without throwing', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec`, roster: { people: [] }, botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+  });
+});
+
+describe('resolvePeople ambiguity', () => {
+  function twoAlecs() {
+    const roster = testRoster();
+    roster.people.push(
+      buildPerson({ id: 'UALEC002', name: 'alec.moreno', is_bot: false, profile: { display_name: 'Alec M', real_name: 'Alec Moreno', title: 'AE' } }),
+    );
+    return roster;
+  }
+
+  it('reports ambiguity instead of silently picking one', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec`, roster: twoAlecs(), botUserId: BOT_ID });
+    assert.deepEqual(r.people, []);
+    assert.equal(r.ambiguous.length, 1);
+    assert.equal(r.ambiguous[0].alias, 'alec');
+    assert.equal(r.ambiguous[0].candidates.length, 2);
+  });
+
+  it('builds a question naming both candidates and their titles', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec`, roster: twoAlecs(), botUserId: BOT_ID });
+    const question = ambiguityPrompt(r.ambiguous);
+    assert.ok(question.includes('Alec'));
+    assert.ok(question.includes('Alec M'));
+    assert.ok(question.includes('SDR'));
+    assert.ok(question.includes('AE'));
+  });
+
+  it('is resolved by a tag in the same message', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> is <@UALEC001> the alec you meant`, roster: twoAlecs(), botUserId: BOT_ID });
+    assert.deepEqual(r.ambiguous, []);
+    assert.deepEqual(r.people.map((p) => p.userId), ['UALEC001']);
+  });
+
+  it('is resolved by using the fuller name', () => {
+    const r = resolvePeople({ rawText: `<@${BOT_ID}> who is alec sloan`, roster: twoAlecs(), botUserId: BOT_ID });
+    assert.deepEqual(r.ambiguous, []);
+    assert.deepEqual(r.people.map((p) => p.userId), ['UALEC001']);
+  });
+
+  it('returns null for no ambiguity', () => {
+    assert.equal(ambiguityPrompt([]), null);
+    assert.equal(ambiguityPrompt(null), null);
+  });
+});
+
+describe('identityToPromptContext', () => {
+  it('renders title and full name as grounded fact', () => {
+    const person = buildPerson({ id: 'U1', name: 'alec.sloan', profile: { display_name: 'Alec', real_name: 'Alec Sloan', title: 'SDR' } });
+    const out = identityToPromptContext(person);
+    assert.ok(out.includes('SDR'));
+    assert.ok(out.includes('Alec Sloan'));
+  });
+
+  it('states deactivation plainly and neutrally', () => {
+    const person = buildPerson({ id: 'U1', name: 'x', deleted: true, profile: { real_name: 'Former Person', title: 'SDR' } });
+    const out = identityToPromptContext(person);
+    assert.ok(out.includes('no longer active'));
+    assert.ok(!/fired|laid off|let go/i.test(out));
+  });
+
+  it('surfaces former display names', () => {
+    const v1 = buildPerson({ id: 'U1', name: 'a', profile: { display_name: 'Alec', real_name: 'Alec Sloan' } });
+    const v2 = buildPerson({ id: 'U1', name: 'a', profile: { display_name: 'Big Al', real_name: 'Alec Sloan' } }, v1);
+    assert.ok(identityToPromptContext(v2).includes('Alec'));
   });
 });

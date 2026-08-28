@@ -21,11 +21,22 @@ import {
   getUserHistory,
   updateUserProfile,
   profileToPromptContext,
-  getKnownUsers,
-  findMentionedTeammates,
   teammateFactsToPromptContext,
 } from '../lib/user-profiles.js';
-import { createReminder, parseReminderTime, getUserReminders } from '../lib/reminders.js';
+import {
+  getIdentityRoster,
+  invalidateRoster,
+  refreshRoster,
+  humans,
+  findById,
+} from '../lib/roster.js';
+import {
+  resolvePeople,
+  identityToPromptContext,
+  ambiguityPrompt,
+  substituteMentions,
+} from '../lib/identity.js';
+import { createReminder, parseReminderTime } from '../lib/reminders.js';
 import { appendChannelLog } from '../lib/channel-log.js';
 
 // The SDR friends channel (sdr-playersonly). Ambient logging - remembering
@@ -52,7 +63,21 @@ const RELAY_FILLERS = [
   'checking, one moment.',
 ];
 
+// Wrapper so background work (roster refresh) is always awaited before the
+// invocation is allowed to end, on every return path. processEvent itself
+// runs inside Vercel's waitUntil, which only keeps the function alive until
+// the promise IT was handed resolves - so an un-awaited refresh could be
+// killed mid-write.
 async function processEvent(body) {
+  const background = [];
+  try {
+    await processEventInner(body, background);
+  } finally {
+    if (background.length) await Promise.allSettled(background);
+  }
+}
+
+async function processEventInner(body, background) {
   const processStart = new Date().toISOString();
   const event = body?.event;
   if (!event) return;
@@ -61,6 +86,18 @@ async function processEvent(body) {
   if (event.type === 'reaction_added') {
     console.log(`reaction: :${event.reaction}: on ${event.item?.channel}:${event.item?.ts}`);
     await handleReaction(event);
+    return;
+  }
+
+  // Identity-changing events invalidate the cached roster so the next lookup
+  // rebuilds it. These only arrive if the corresponding event subscriptions
+  // are enabled in the Slack app config; harmless no-op if they never fire.
+  if (event.type === 'user_change' || event.type === 'team_join') {
+    await invalidateRoster(AMBIENT_LOG_CHANNEL_ID);
+    return;
+  }
+  if (event.type === 'member_joined_channel' || event.type === 'member_left_channel') {
+    await invalidateRoster(event.channel);
     return;
   }
 
@@ -86,9 +123,23 @@ async function processEvent(body) {
     return;
   }
 
-  // Clean Slack markup up front - needed for ambient logging below as well
-  // as the rest of the pipeline once a trigger is confirmed.
-  const cleanedText = cleanSlackText(event.text);
+  // Roster first, because mention resolution depends on it.
+  //
+  // Lazy + TTL-cached: a fresh roster is a single KV read, a stale one is
+  // served immediately while it refreshes behind the reply, and only a cold
+  // cache blocks. No scheduler involved - see the header of lib/roster.js
+  // for why a cron was rejected. Always anchored on the team channel so a DM
+  // or another channel can still resolve teammates; see getIdentityRoster.
+  const roster = await getIdentityRoster(event.channel, AMBIENT_LOG_CHANNEL_ID, {
+    keepAlive: (p) => background.push(p),
+  });
+
+  // THE ORDER THAT MATTERS: substitute <@U…> mentions to real names using
+  // the roster BEFORE cleanSlackText gets a chance to degrade them to the
+  // literal string "@U09GGU5ED24". Everything downstream - intent, name
+  // matching, the prompt, the channel log - sees names, never raw IDs.
+  const namedText = substituteMentions(event.text, roster, botUserId);
+  const cleanedText = cleanSlackText(namedText);
   if (!cleanedText) return;
 
   // In a DM there's no ambiguity about who a message is for - it's always
@@ -120,7 +171,12 @@ async function processEvent(body) {
     // returns, silently dropping the KV writes.
     if (event.channel === AMBIENT_LOG_CHANNEL_ID && event.user) {
       try {
-        const displayName = await resolveUser(event.user);
+        // Prefer the roster's name: it already applies Slack's
+        // display_name -> real_name -> handle fallback (3 of 13 humans in
+        // this channel have an empty display_name), it's consistent with
+        // what identity resolution matches on, and it costs no API call.
+        const rosterEntry = findById(roster, event.user);
+        const displayName = rosterEntry?.preferredName || (await resolveUser(event.user));
         await Promise.all([
           updateUserProfile(event.user, {
             displayName,
@@ -155,27 +211,89 @@ async function processEvent(body) {
   const replyThreadTs =
     event.thread_ts || (trigger === 'direct' ? event.ts : undefined);
 
-  // Known teammates mentioned by name (e.g. "did alice leave?"). Only skip
-  // the relay when we actually have grounded facts about them (channel
-  // notes / life events) - being in the known-users index just means
-  // they've posted a message in the channel at some point, which is true
-  // of nearly everyone once ambient logging is running. Gating on index
-  // membership alone would silently break "who is X" for people we have
-  // nothing to say about, where the Notion relay might still have a real
-  // answer.
-  const knownUsers = await getKnownUsers();
-  const mentionedTeammates = findMentionedTeammates(cleanedText, knownUsers, event.user);
+  // Manual roster refresh. The TTL is 6h, which is right for normal use but
+  // useless when you've just renamed someone and want to test it. Escape
+  // hatch so nobody has to wait on a cache.
+  if (/\b(refresh|rebuild|reload)\s+(the\s+)?roster\b/i.test(cleanedText)) {
+    const fresh = await refreshRoster(event.channel);
+    const active = humans(fresh);
+    await postToSlack({
+      channel: event.channel,
+      text:
+        `roster refreshed: ${active.length} teammates, ` +
+        `${fresh.people.length - active.length} bots/deactivated.`,
+      thread_ts: replyThreadTs,
+    });
+    return;
+  }
+
+  // ---- IDENTITY RESOLUTION ----
+  // Resolved from the RAW event text so mention syntax is consumed before
+  // any fuzzy matching. Tags are authoritative; typed names are matched
+  // against roster aliases (real name, display name, handle, past names).
+  const resolved = resolvePeople({
+    rawText: event.text,
+    roster,
+    botUserId,
+    excludeUserId: event.user,
+  });
+
+  // An ambiguous name must be asked about, never guessed. Handled before
+  // anything else spends a token on the wrong person.
+  if (resolved.ambiguous.length > 0) {
+    const question = ambiguityPrompt(resolved.ambiguous);
+    console.log(`identity: ambiguous ${JSON.stringify(resolved.ambiguous.map((a) => a.alias))}, asking`);
+    await postToSlack({ channel: event.channel, text: question, thread_ts: replyThreadTs });
+    return;
+  }
+
+  // Apps in the channel (Notion, ChatGPT Agents, claudesington itself) can
+  // be tagged like anyone else, but they are not teammates to look up.
+  const taggedApps = resolved.people.filter((p) => p.isBot);
+  const teammates = resolved.people.filter((p) => !p.isBot);
+
+  // Grounded facts per person: Slack profile identity (title, full name,
+  // deactivation, former names) plus whatever the profile store knows
+  // (channel notes, life events). Identity alone is enough to answer "who
+  // is X" - it comes straight from the Slack profile, so a person with zero
+  // notes still gets a true answer instead of a deflection.
   const mentionedFacts = (
     await Promise.all(
-      mentionedTeammates.map(async (u) => {
-        const profile = await getUserProfile(u.userId);
-        const facts = teammateFactsToPromptContext(profile);
-        return facts ? { displayName: u.displayName, facts } : null;
+      teammates.map(async (person) => {
+        const profile = await getUserProfile(person.userId);
+        const parts = [
+          identityToPromptContext(person),
+          teammateFactsToPromptContext(profile),
+        ].filter(Boolean);
+        return { name: person.preferredName, facts: parts.join('\n'), via: person.via };
       }),
     )
-  ).filter(Boolean);
-  const mentionedContext = mentionedFacts.map((m) => `*${m.displayName}*:\n${m.facts}`).join('\n\n');
-  const hasLocalPersonLookup = intent === 'identity_person_lookup' && mentionedFacts.length > 0;
+  ).filter((m) => m.facts);
+
+  const appContext = taggedApps
+    .map((p) => `*${p.preferredName}*:\nslack profile: an app/bot in this channel, not a teammate`)
+    .join('\n\n');
+
+  const mentionedContext = [
+    ...mentionedFacts.map((m) => `*${m.name}*:\n${m.facts}`),
+    appContext,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  if (resolved.people.length || resolved.unknownTags.length || resolved.subteamIds.length) {
+    console.log(
+      `identity: resolved=[${resolved.people.map((p) => `${p.preferredName}:${p.via}`).join(', ')}]` +
+        ` unknown_tags=[${resolved.unknownTags.join(', ')}]` +
+        ` subteams=[${resolved.subteamIds.join(', ')}]`,
+    );
+  }
+
+  // A person lookup we can answer locally: we identified a real teammate and
+  // have at least one grounded fact about them. No need to burn ~55s on the
+  // Notion relay for something the Slack profile already answers.
+  const hasLocalPersonLookup =
+    intent === 'identity_person_lookup' && mentionedFacts.length > 0;
 
   // --- RELAY PATH ---
   // Only relay when the intent genuinely needs grounded Notion/Calendar data.
