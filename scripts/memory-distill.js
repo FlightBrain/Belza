@@ -11,6 +11,13 @@ import path from 'path';
 import { getChannelLogSince } from '../lib/channel-log.js';
 import { getKnownUsers, mergeChannelIntel } from '../lib/user-profiles.js';
 
+// The team is entirely on Pacific (verified: all 13 roster members report
+// tz America/Los_Angeles). Without an explicit timeZone, toLocaleDateString
+// uses the SERVER's zone - UTC on Vercel - so anything said after 4pm PT is
+// stamped with tomorrow's date. On a lifeEvent that wrong date then persists
+// for 90 days and gets read back out as fact.
+const BOT_TZ = 'America/Los_Angeles';
+
 const CHANNEL_ID = process.env.SLACK_CHANNEL_ID || 'C093Z82DK18';
 const STATE_PATH = path.join('automation', 'memory-distill-state.json');
 const AUDIT_DIR = path.join('automation', 'memory-distill');
@@ -31,7 +38,7 @@ function saveState(state) {
 function buildTranscript(entries) {
   return entries
     .map((e) => {
-      const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'unknown date';
+      const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: BOT_TZ }) : 'unknown date';
       return `[${date}] ${e.displayName || e.userId || 'someone'}: ${e.message}`;
     })
     .join('\n');
@@ -114,13 +121,33 @@ export function neutralizeDeparture(note) {
 export function resolveUserId(name, knownUsers) {
   if (!name) return null;
   const target = name.trim().toLowerCase();
-  const hit = knownUsers.find((u) => {
+
+  const matches = (knownUsers || []).filter((u) => {
     const full = (u.displayName || '').trim().toLowerCase();
     if (!full) return false;
     const first = full.split(/\s+/)[0];
     return full === target || first === target;
   });
-  return hit?.userId || null;
+
+  if (matches.length === 1) return matches[0].userId;
+
+  // A full-name match beats a first-name match, so "Alec Sloan" still resolves
+  // even with a second Alec in the index.
+  const exact = matches.filter((u) => (u.displayName || '').trim().toLowerCase() === target);
+  if (exact.length === 1) return exact[0].userId;
+
+  // Genuinely ambiguous. Refuse rather than filing the note on whoever happens
+  // to be first in the index - this used to attribute one person's life event
+  // to another silently, which is the worst possible outcome for a store the
+  // bot later states as fact. lib/identity.js already refuses to guess on the
+  // live path; the distiller has no user to ask, so it drops the note.
+  if (matches.length > 1) {
+    console.warn(
+      `memory-distill: "${name}" is ambiguous between ` +
+        `${matches.map((u) => `${u.displayName} (${u.userId})`).join(', ')} - dropping the note`,
+    );
+  }
+  return null;
 }
 
 async function main() {

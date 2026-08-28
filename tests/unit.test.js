@@ -3872,3 +3872,56 @@ describe('regression: plain departures stay plain, neutral, and grammatical', ()
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6 review: fixes for verified findings from the failure-mode register
+// ---------------------------------------------------------------------------
+
+describe('regression: distill refuses to guess between same-first-name people', () => {
+  const twoAlecs = [
+    { userId: 'UALEC001', displayName: 'Alec Sloan' },
+    { userId: 'UALEC002', displayName: 'Alec Moreno' },
+  ];
+
+  it('returns null rather than filing the note on whoever is first', () => {
+    // This previously returned UALEC001 silently, attributing one person's
+    // life event to another. lib/identity.js refuses to guess on the live
+    // path; the distiller has no user to ask, so it drops the note.
+    assert.equal(resolveUserId('alec', twoAlecs), null);
+  });
+
+  it('still resolves when the full name disambiguates', () => {
+    assert.equal(resolveUserId('alec sloan', twoAlecs), 'UALEC001');
+    assert.equal(resolveUserId('Alec Moreno', twoAlecs), 'UALEC002');
+  });
+
+  it('still resolves a first name when it is unique', () => {
+    assert.equal(resolveUserId('alec', [{ userId: 'UALEC001', displayName: 'Alec Sloan' }]), 'UALEC001');
+  });
+
+  it('tolerates a missing or empty index', () => {
+    assert.equal(resolveUserId('alec', []), null);
+    assert.equal(resolveUserId('alec', null), null);
+    assert.equal(resolveUserId('', twoAlecs), null);
+  });
+});
+
+describe('regression: dates are stamped in Pacific, not the server zone', () => {
+  it('stamps a late-afternoon PT message with today, not tomorrow', () => {
+    // On Vercel the server is UTC, so toLocaleDateString with no timeZone
+    // stamped anything after 4pm PT with tomorrow's date - and on a lifeEvent
+    // that wrong date persisted for 90 days and was read back out as fact.
+    // 2026-08-28T23:30:00Z is 4:30pm PT on Aug 28.
+    const ts = '2026-08-28T23:30:00Z';
+    const profile = {
+      displayName: 'Test',
+      messageCount: 2,
+      personality: [],
+      intentCounts: {},
+      recentTopics: [],
+    };
+    const out = profileToPromptContext(profile, [{ message: 'hi', timestamp: ts }]);
+    assert.match(out, /Aug 28/);
+    assert.ok(!/Aug 29/.test(out), out);
+  });
+});
