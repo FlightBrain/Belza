@@ -6,7 +6,6 @@ import { isDuplicate } from '../lib/dedup.js';
 import { cleanSlackText } from '../lib/parse.js';
 import { classifyIntent, hasWorkSignal, wantsMarketingEvents } from '../lib/intent.js';
 import { getCapabilities, capabilitySummary } from '../lib/capabilities.js';
-import { fetchCalendarContext } from '../lib/calendar.js';
 import { buildThreadContext } from '../lib/thread-context.js';
 import { buildSystemPrompt } from '../prompts/system.js';
 import { fitSections, budgetLogLine, RECOMMENDED_PROMPT_BUDGET_TOKENS } from '../lib/token-budget.js';
@@ -594,7 +593,13 @@ async function processEventInner(body, background) {
 
       await postToSlack({
         channel: event.channel,
-        text: `got it ${sName}, i'll ping you ${timeStr} PT: "${aboutText}"`,
+        // The reminder cron runs ONCE A DAY (vercel.json), not every 5 minutes
+        // as check-reminders.js used to claim - Vercel Hobby caps cron at once
+        // per day per job. Promising a precise time we cannot hit makes the bot
+        // look broken rather than limited.
+        text:
+          `got it ${sName}, noted for ${timeStr} PT: "${aboutText}". ` +
+          `heads up, i only check reminders once a day right now so it might land late.`,
         thread_ts: replyThreadTs,
       });
 
@@ -628,11 +633,17 @@ async function processEventInner(body, background) {
   // returned it. Reaching this point means either the message didn't warrant a
   // Notion lookup or the relay had nothing, and in both cases the local model
   // must answer from what it has rather than from a second, disagreeing source.
-  const wantsCalendar = intent === 'calendar_whereabouts';
+  // Calendar is GONE, not disabled. A Google API key gives anonymous access to
+  // PUBLIC data only - verified verbatim in Google's own docs ("API keys
+  // provide anonymous access to public data"), and calendars.get "requires
+  // authorization". Workspace employee calendars are not public, so an API key
+  // returns 404 for every teammate. Reading colleagues' calendars needs either
+  // per-user OAuth or a service account with domain-wide delegation authorized
+  // by a Braintrust super admin. Until that exists there is no calendar
+  // source, and a source that silently returns "[not connected]" forever is
+  // worse than none - it makes the prompt claim a capability that cannot work.
   const retrievalStartedAt = new Date();
-  const [calendarResult] = await Promise.all([
-    wantsCalendar ? fetchCalendarContext() : Promise.resolve(null),
-  ]);
+  const calendarResult = null;
   const retrievalFinishedAt = new Date();
 
   // TOKEN BUDGET. The variable-length sections all grow without bound as
@@ -742,7 +753,6 @@ async function processEventInner(body, background) {
           environment: ENVIRONMENT,
           trace_kind: 'production_reply',
           app_version: APP_VERSION,
-          used_calendar_context: Boolean(wantsCalendar),
           relay_attempted: Boolean(relayAttempted),
         },
         tags: ['slack-bot'],

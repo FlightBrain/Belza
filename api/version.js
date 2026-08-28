@@ -53,8 +53,9 @@ export default function handler(req, res) {
       groq_configured: present('GROQ_API_KEY'),
       braintrust_configured: present('BRAINTRUST_API_KEY'),
       kv_configured: present('KV_REST_API_URL') && present('KV_REST_API_TOKEN'),
-      google_calendar_configured:
-        present('GOOGLE_CALENDAR_API_KEY') && present('GOOGLE_CALENDAR_IDS'),
+      // Not a config gap - a removed integration. An API key cannot read a
+      // Workspace calendar at all; see the comment in lib/capabilities.js.
+      google_calendar: 'removed (needs OAuth or domain-wide delegation)',
       cron_secret_configured: present('CRON_SECRET'),
     },
   });

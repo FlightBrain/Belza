@@ -4090,3 +4090,68 @@ describe('formatDuration', () => {
     assert.equal(formatDuration(null), 'unknown');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Failure-mode register, section J: applied mitigations
+// ---------------------------------------------------------------------------
+
+describe('J-E: relay timeout cannot overrun the function budget', () => {
+  const withEnv = (vals, fn) => {
+    const saved = {};
+    for (const [k, v] of Object.entries(vals)) { saved[k] = process.env[k]; process.env[k] = v; }
+    try { return fn(); } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+
+  it('caps a 55s request to fit inside the 60s maxDuration', () => {
+    // Polling the full 55s from the point the relay STARTS overruns the
+    // invocation, because thread fetch, roster, thread context and the filler
+    // post all happened first - and posting the answer still has to happen
+    // after. The user is then left with the filler and nothing else, which is
+    // the worst visible failure this bot has: the filler is a promise.
+    withEnv({ RELAY_TIMEOUT_MS: '55000' }, () => {
+      assert.equal(getRelayConfig().timeoutMs, 48000);
+    });
+  });
+
+  it('respects a lower configured value', () => {
+    withEnv({ RELAY_TIMEOUT_MS: '20000' }, () => {
+      assert.equal(getRelayConfig().timeoutMs, 20000);
+    });
+  });
+
+  it('still clears the measured relay latency', () => {
+    // 18.8s-31.2s over 14 real round trips.
+    withEnv({ RELAY_TIMEOUT_MS: '55000' }, () => {
+      assert.ok(getRelayConfig().timeoutMs > 31200 * 1.4);
+    });
+  });
+});
+
+describe('J-F: pronouns are a fact, never a guess', () => {
+  it('carries pronouns from the Slack profile', () => {
+    const p = buildPerson({ id: 'U1', name: 'a', profile: { display_name: 'Sacha', real_name: 'Sacha T', title: 'SDR', pronouns: 'she/her' } });
+    assert.equal(p.pronouns, 'she/her');
+    assert.match(identityToPromptContext(p), /pronouns she\/her/);
+  });
+
+  it('states explicitly when there is NO pronoun data', () => {
+    // Silence is what the model fills in with a guess. Observed live: it
+    // called both Kensington and Sacha "she" with no pronoun data anywhere.
+    const p = buildPerson({ id: 'U2', name: 'b', profile: { display_name: 'Kensington Belza', real_name: 'Kensington Belza', title: 'SDR' } });
+    assert.equal(p.pronouns, '');
+    assert.match(identityToPromptContext(p), /no pronoun data - use they\/them/);
+  });
+
+  it('emits a pronoun line even for a person with no title at all', () => {
+    const p = buildPerson({ id: 'U3', name: 'c', profile: { real_name: 'No Title Person' } });
+    assert.match(identityToPromptContext(p), /pronoun/);
+  });
+
+  it('puts the rule in the system prompt', () => {
+    const prompt = buildSystemPrompt({ capabilities: '', intent: 'general_qna', threadContext: '' });
+    assert.match(prompt, /pronouns are a FACT, not a guess/);
+    assert.match(prompt, /never infer gender from a name/);
+  });
+});

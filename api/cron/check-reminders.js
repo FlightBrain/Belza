@@ -1,4 +1,11 @@
-// Cron job: runs every 5 minutes, checks for due reminders, sends them.
+// Cron job: checks for due reminders and sends them.
+//
+// Scheduled "0 9 * * *" in vercel.json - ONCE A DAY, not every 5 minutes as
+// this comment used to claim. Vercel Hobby caps cron at once per day per job
+// (the same cap that made a scheduled roster refresh useless; see the header
+// of lib/roster.js). A reminder can therefore fire up to ~24h late, and the
+// bot now says so when setting one. Do not change the schedule here without
+// checking the plan - an unsupported cron expression fails the deploy.
 
 import { getDueReminders, markRemindersSent } from '../../lib/reminders.js';
 import { postToSlack } from '../../lib/slack.js';
