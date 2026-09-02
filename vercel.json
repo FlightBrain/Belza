@@ -13,10 +13,6 @@
   },
   "crons": [
     {
-      "path": "/api/cron/proactive-update",
-      "schedule": "0 1 * * 2-6"
-    },
-    {
       "path": "/api/cron/check-reminders",
       "schedule": "0 9 * * *"
     }
